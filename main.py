@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from pydantic import BaseModel, Field
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -22,7 +23,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -58,7 +59,7 @@ ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "720"))
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
 
-app = FastAPI(title="Auto Proposal & Invoice Generator", version="1.0.0")
+app = FastAPI(title="Vinh Ứng dụng tra cứu", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
 VN_BANKS = [
@@ -114,6 +115,46 @@ PROFILE_FIELDS = {
     "Câu trả lời bảo mật": lambda user: user.security_answer_hash,
 }
 MAX_BALANCE = Decimal("999999999999.99")
+
+
+class DesktopLoginPayload(BaseModel):
+    identifier: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class DesktopCustomerPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    company: str = Field(default="", max_length=200)
+    email: str = Field(default="", max_length=255)
+    phone: str = Field(default="", max_length=50)
+    address: str = Field(default="", max_length=2000)
+    tax_code: str = Field(default="", max_length=50)
+
+
+class DesktopProductPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    description: str = Field(default="", max_length=2000)
+    unit: str = Field(default="lần", max_length=40)
+    unit_price: Decimal = Field(gt=0, le=MAX_AMOUNT)
+
+
+class DesktopDocumentItemPayload(BaseModel):
+    product_id: int
+    quantity: Decimal = Field(gt=0, le=Decimal("1000000"))
+
+
+class DesktopDocumentPayload(BaseModel):
+    kind: str
+    customer_id: int
+    title: str = Field(min_length=1, max_length=200)
+    items: list[DesktopDocumentItemPayload] = Field(min_length=1, max_length=100)
+    discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    tax_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    notes: str = Field(default="", max_length=4000)
+
+
+class DesktopDocumentStatusPayload(BaseModel):
+    status: str
 
 
 def get_db():
@@ -281,21 +322,18 @@ def initialize_database() -> None:
     init_db()
     with SessionLocal() as db:
         for seed in PACKAGE_SEEDS:
-            package = db.scalar(select(Package).where(Package.name == seed["name"]))
-            if package is None:
+            if db.scalar(select(Package.id).where(Package.name == seed["name"])) is None:
                 db.add(Package(**seed))
         db.commit()
         admin_email = os.getenv("ADMIN_EMAIL", "admin@gmail.com").strip().lower()
         admin_password = os.getenv("ADMIN_PASSWORD", "")
+        admin = db.scalar(select(User).where(func.lower(User.email) == admin_email))
         if admin_password:
             if password_policy_error(admin_password):
                 raise RuntimeError(
                     "ADMIN_PASSWORD must contain at least 10 characters, "
                     "one uppercase letter, one digit, and one special character."
                 )
-            admin = db.scalar(
-                select(User).where(func.lower(User.email) == admin_email)
-            )
             if admin is None:
                 base_username = re.sub(
                     r"[^a-z0-9_.-]", "", admin_email.split("@", 1)[0].lower()
@@ -321,11 +359,15 @@ def initialize_database() -> None:
                     )
                 )
                 db.commit()
-            elif admin.role != "admin":
-                raise RuntimeError(
-                    "ADMIN_EMAIL is already assigned to a non-admin account. "
-                    "Choose another ADMIN_EMAIL or resolve the account before startup."
-                )
+        if admin is not None and (
+            admin.role != "admin"
+            or not admin.is_active
+            or admin.account_status != "active"
+        ):
+            admin.role = "admin"
+            admin.account_status = "active"
+            admin.is_active = True
+            db.commit()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -706,8 +748,10 @@ def subscribe(
 ):
     package = db.get(Package, package_id)
     bank = db.scalar(select(BankAccount).where(BankAccount.is_active.is_(True)).order_by(BankAccount.id))
-    if package is None or not package.is_active or bank is None:
-        raise HTTPException(status_code=400, detail="Gói dịch vụ hoặc tài khoản nhận tiền hiện không khả dụng.")
+    if package is None or not package.is_active:
+        raise HTTPException(status_code=404, detail="Gói dịch vụ hiện không khả dụng.")
+    if bank is None:
+        return RedirectResponse("/pricing?error=no_bank", status_code=303)
     ref = "AP" + secrets.token_hex(5).upper()
     slug = package.name.upper().replace(" ", "")
     content = f"NAP {user.id} {slug} {ref} - {user.company_name or user.full_name}"
@@ -748,7 +792,7 @@ def mark_payment_submitted(
 @app.get("/app", response_class=HTMLResponse)
 def dashboard(
     request: Request,
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     customer_count = db.scalar(select(func.count(Customer.id)).where(Customer.owner_id == user.id)) or 0
@@ -767,6 +811,12 @@ def dashboard(
         customer_count=customer_count,
         product_count=product_count,
         documents=documents,
+        packages=db.scalars(
+            select(Package)
+            .where(Package.is_active.is_(True))
+            .order_by(Package.price)
+        ).all(),
+        can_use_workspace=subscription_is_active(user),
     )
 
 
@@ -1246,6 +1296,7 @@ def manage_user(
     action: str = Form(...),
     days: int = Form(30, ge=1, le=3650),
     balance: Decimal = Form(0, ge=0, le=MAX_BALANCE),
+    expire_date: str = Form(""),
     _csrf: None = Depends(csrf_protected),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -1271,7 +1322,18 @@ def manage_user(
         target.package_id = package.id
         target.account_status = "active"
         target.is_active = True
-        target.trial_expires_at = utcnow() + timedelta(days=days)
+        if expire_date:
+            try:
+                target.trial_expires_at = datetime.strptime(
+                    expire_date, "%Y-%m-%d"
+                ).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Ngày hết hạn dùng thử không hợp lệ.") from None
+        else:
+            target.trial_expires_at = utcnow() + timedelta(days=days)
+        target.subscription_expires_at = None
+    elif action == "trial_off":
+        target.trial_expires_at = None
     elif action == "extend":
         if target.package_id is None:
             package = db.scalar(select(Package).where(Package.name == "Cơ bản"))
@@ -1290,6 +1352,236 @@ def manage_user(
         raise HTTPException(status_code=400, detail="Thao tác quản lý tài khoản không hợp lệ.")
     db.commit()
     return RedirectResponse("/admin/users?updated=1", status_code=303)
+
+
+@app.post("/admin/users")
+def create_user_by_admin(
+    username: str = Form(..., min_length=3, max_length=30),
+    email: str = Form(..., max_length=255),
+    full_name: str = Form(..., min_length=2, max_length=160),
+    company_name: str = Form("", max_length=200),
+    password: str = Form(..., max_length=128),
+    role: str = Form("user"),
+    expire_date: str = Form(""),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    username = username.strip().lower()
+    email = email.strip().lower()
+    if role not in {"user", "admin"}:
+        raise HTTPException(status_code=400, detail="Vai trò tài khoản không hợp lệ.")
+    if not USERNAME_PATTERN.fullmatch(username):
+        raise HTTPException(status_code=400, detail="Username cần 3–30 ký tự hợp lệ.")
+    if not GMAIL_PATTERN.fullmatch(email):
+        raise HTTPException(status_code=400, detail=GMAIL_ERROR)
+    if role == "user" and role_is_reserved(email):
+        raise HTTPException(status_code=400, detail="Email Admin được dành riêng cho quản trị viên.")
+    if error := password_policy_error(password):
+        raise HTTPException(status_code=400, detail=error)
+    if db.scalar(select(User.id).where(func.lower(User.username) == username)):
+        raise HTTPException(status_code=409, detail="Username đã tồn tại.")
+    if db.scalar(select(User.id).where(func.lower(User.email) == email)):
+        raise HTTPException(status_code=409, detail="Email đã tồn tại.")
+    trial_expiry = None
+    if expire_date:
+        try:
+            trial_expiry = datetime.strptime(expire_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Ngày hết hạn dùng thử không hợp lệ.") from None
+    new_user = User(
+        username=username,
+        email=email,
+        full_name=full_name.strip(),
+        company_name=company_name.strip(),
+        password_hash=pwd_context.hash(password),
+        role=role,
+        trial_expires_at=trial_expiry,
+    )
+    if trial_expiry:
+        package = db.scalar(select(Package).where(Package.name == "Cơ bản"))
+        if package is None:
+            raise HTTPException(status_code=503, detail="Chưa cấu hình gói Cơ bản.")
+        new_user.package_id = package.id
+    db.add(new_user)
+    db.commit()
+    return RedirectResponse("/admin/users?created=1", status_code=303)
+
+
+@app.post("/admin/users/{target_user_id}/edit")
+def edit_user_by_admin(
+    target_user_id: int,
+    username: str = Form(..., min_length=3, max_length=30),
+    email: str = Form(..., max_length=255),
+    full_name: str = Form(..., min_length=2, max_length=160),
+    company_name: str = Form("", max_length=200),
+    password: str = Form("", max_length=128),
+    expire_date: str = Form(""),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    target = db.get(User, target_user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản.")
+    username = username.strip().lower()
+    email = email.strip().lower()
+    if not USERNAME_PATTERN.fullmatch(username) or not GMAIL_PATTERN.fullmatch(email):
+        raise HTTPException(status_code=400, detail="Username hoặc địa chỉ Gmail không hợp lệ.")
+    if db.scalar(
+        select(User.id).where(
+            func.lower(User.username) == username, User.id != target.id
+        )
+    ):
+        raise HTTPException(status_code=409, detail="Username đã tồn tại.")
+    if db.scalar(
+        select(User.id).where(func.lower(User.email) == email, User.id != target.id)
+    ):
+        raise HTTPException(status_code=409, detail="Email đã tồn tại.")
+    if target.id != admin.id and role_is_reserved(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Email Admin được dành riêng cho tài khoản quản trị.",
+        )
+    if password and (error := password_policy_error(password)):
+        raise HTTPException(status_code=400, detail=error)
+    trial_expiry = None
+    if expire_date:
+        try:
+            trial_expiry = datetime.strptime(expire_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Ngày hết hạn dùng thử không hợp lệ.") from None
+    target.username = username
+    target.email = email
+    target.full_name = full_name.strip()
+    target.company_name = company_name.strip()
+    if password:
+        target.password_hash = pwd_context.hash(password)
+    target.trial_expires_at = trial_expiry
+    db.commit()
+    return RedirectResponse("/admin/users?updated=1", status_code=303)
+
+
+@app.post("/admin/users/{target_user_id}/delete")
+def delete_user_by_admin(
+    target_user_id: int,
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    target = db.get(User, target_user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản.")
+    if target.id == admin.id:
+        raise HTTPException(status_code=400, detail="Không thể xóa tài khoản Admin đang đăng nhập.")
+    document_ids = select(Document.id).where(Document.owner_id == target.id)
+    db.execute(delete(DocumentItem).where(DocumentItem.document_id.in_(document_ids)))
+    db.execute(delete(Document).where(Document.owner_id == target.id))
+    db.execute(delete(Customer).where(Customer.owner_id == target.id))
+    db.execute(delete(Product).where(Product.owner_id == target.id))
+    db.execute(delete(PaymentRequest).where(PaymentRequest.user_id == target.id))
+    db.execute(delete(Notification).where(Notification.user_id == target.id))
+    db.execute(delete(PasswordResetRequest).where(PasswordResetRequest.user_id == target.id))
+    db.delete(target)
+    db.commit()
+    return RedirectResponse("/admin/users?deleted=1", status_code=303)
+
+
+def role_is_reserved(email: str) -> bool:
+    return email.strip().lower() == os.getenv("ADMIN_EMAIL", "admin@gmail.com").strip().lower()
+
+
+@app.post("/admin/packages")
+def create_package(
+    name: str = Form(..., min_length=2, max_length=80),
+    description: str = Form("", max_length=4000),
+    price: Decimal = Form(..., ge=0, le=MAX_AMOUNT),
+    duration_days: int = Form(30, ge=1, le=3650),
+    customer_limit: int = Form(100, ge=1, le=10000000),
+    document_limit: int = Form(100, ge=1, le=10000000),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    name = name.strip()
+    if db.scalar(select(Package.id).where(func.lower(Package.name) == name.lower())):
+        raise HTTPException(status_code=409, detail="Tên gói dịch vụ đã tồn tại.")
+    db.add(
+        Package(
+            name=name,
+            description=description.strip(),
+            price=price.quantize(Decimal("0.01")),
+            duration_days=duration_days,
+            customer_limit=customer_limit,
+            document_limit=document_limit,
+        )
+    )
+    db.commit()
+    return RedirectResponse("/admin?package_updated=1#packages", status_code=303)
+
+
+@app.post("/admin/packages/{package_id}/edit")
+def edit_package(
+    package_id: int,
+    name: str = Form(..., min_length=2, max_length=80),
+    description: str = Form("", max_length=4000),
+    price: Decimal = Form(..., ge=0, le=MAX_AMOUNT),
+    duration_days: int = Form(30, ge=1, le=3650),
+    customer_limit: int = Form(100, ge=1, le=10000000),
+    document_limit: int = Form(100, ge=1, le=10000000),
+    is_active: bool = Form(False),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    package = db.get(Package, package_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy gói dịch vụ.")
+    name = name.strip()
+    if db.scalar(
+        select(Package.id).where(
+            func.lower(Package.name) == name.lower(), Package.id != package.id
+        )
+    ):
+        raise HTTPException(status_code=409, detail="Tên gói dịch vụ đã tồn tại.")
+    package.name = name
+    package.description = description.strip()
+    package.price = price.quantize(Decimal("0.01"))
+    package.duration_days = duration_days
+    package.customer_limit = customer_limit
+    package.document_limit = document_limit
+    package.is_active = is_active
+    db.commit()
+    return RedirectResponse("/admin?package_updated=1#packages", status_code=303)
+
+
+@app.post("/admin/packages/{package_id}/delete")
+def delete_package(
+    package_id: int,
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    package = db.get(Package, package_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy gói dịch vụ.")
+    used = db.scalar(
+        select(User.id).where(User.package_id == package.id).limit(1)
+    ) or db.scalar(
+        select(PaymentRequest.id).where(PaymentRequest.package_id == package.id).limit(1)
+    )
+    seeded_package = any(seed["name"] == package.name for seed in PACKAGE_SEEDS)
+    if used or seeded_package:
+        package.is_active = False
+        db.commit()
+        return RedirectResponse("/admin?package_archived=1#packages", status_code=303)
+    db.delete(package)
+    db.commit()
+    return RedirectResponse("/admin?package_deleted=1#packages", status_code=303)
 
 
 @app.post("/admin/password-resets/{reset_id}/review")
@@ -1376,20 +1668,76 @@ def create_bank_account(
     account_number: str = Form(..., min_length=3, max_length=100),
     account_holder: str = Form(..., min_length=2, max_length=160),
     transfer_instruction: str = Form("", max_length=255),
+    qr_code_url: str = Form("", max_length=1000),
     _csrf: None = Depends(csrf_protected),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    if qr_code_url and not qr_code_url.strip().lower().startswith("https://"):
+        raise HTTPException(status_code=400, detail="QR Code phải dùng URL HTTPS.")
     db.add(
         BankAccount(
             bank_name=bank_name.strip(),
             account_number=account_number.strip(),
             account_holder=account_holder.strip(),
             transfer_instruction=transfer_instruction.strip(),
+            qr_code_url=qr_code_url.strip(),
         )
     )
     db.commit()
     return RedirectResponse("/admin?bank_added=1", status_code=303)
+
+
+@app.post("/admin/banks/{bank_id}/edit")
+def edit_bank_account(
+    bank_id: int,
+    bank_name: str = Form(..., min_length=2, max_length=100),
+    account_number: str = Form(..., min_length=3, max_length=100),
+    account_holder: str = Form(..., min_length=2, max_length=160),
+    transfer_instruction: str = Form("", max_length=255),
+    qr_code_url: str = Form("", max_length=1000),
+    is_active: bool = Form(False),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if qr_code_url and not qr_code_url.strip().lower().startswith("https://"):
+        raise HTTPException(status_code=400, detail="QR Code phải dùng URL HTTPS.")
+    bank = db.get(BankAccount, bank_id)
+    if bank is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản ngân hàng.")
+    bank.bank_name = bank_name.strip()
+    bank.account_number = account_number.strip()
+    bank.account_holder = account_holder.strip()
+    bank.transfer_instruction = transfer_instruction.strip()
+    bank.qr_code_url = qr_code_url.strip()
+    bank.is_active = is_active
+    db.commit()
+    return RedirectResponse("/admin?bank_updated=1#banks", status_code=303)
+
+
+@app.post("/admin/banks/{bank_id}/delete")
+def delete_bank_account(
+    bank_id: int,
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    bank = db.get(BankAccount, bank_id)
+    if bank is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản ngân hàng.")
+    has_payment_history = db.scalar(
+        select(PaymentRequest.id)
+        .where(PaymentRequest.bank_account_id == bank_id)
+        .limit(1)
+    )
+    if has_payment_history:
+        bank.is_active = False
+        db.commit()
+        return RedirectResponse("/admin?bank_archived=1#banks", status_code=303)
+    db.delete(bank)
+    db.commit()
+    return RedirectResponse("/admin?bank_deleted=1#banks", status_code=303)
 
 
 @app.post("/admin/banks/{bank_id}/toggle")
@@ -1406,6 +1754,312 @@ def toggle_bank(
     db.commit()
     return RedirectResponse("/admin?bank_updated=1", status_code=303)
 
+
+def get_api_user(request: Request, db: Session) -> User:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Thiếu Bearer access token.")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub", ""))
+    except (JWTError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Access token không hợp lệ hoặc đã hết hạn.") from None
+    user = db.get(User, user_id)
+    if user is None or not user.is_active or user.account_status != "active":
+        raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa hoặc ngừng hoạt động.")
+    return user
+
+
+def api_require_subscription(user: User) -> None:
+    if not subscription_is_active(user):
+        raise HTTPException(status_code=403, detail="Gói dịch vụ đã hết hạn hoặc chưa được kích hoạt.")
+
+
+@app.post("/api/auth/login")
+def api_login(payload: DesktopLoginPayload, db: Session = Depends(get_db)):
+    identifier = payload.identifier.strip().lower()
+    user = db.scalar(
+        select(User).where(
+            or_(
+                func.lower(User.email) == identifier,
+                func.lower(User.username) == identifier,
+            )
+        )
+    )
+    if (
+        user is None
+        or not user.is_active
+        or user.account_status != "active"
+        or len(payload.password.encode("utf-8")) > 72
+        or not pwd_context.verify(payload.password, user.password_hash)
+    ):
+        raise HTTPException(status_code=401, detail="Tên đăng nhập hoặc mật khẩu không chính xác.")
+    return {
+        "access_token": create_access_token(user),
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+        },
+    }
+
+
+@app.get("/api/me")
+def api_me(request: Request, db: Session = Depends(get_db)):
+    user = get_api_user(request, db)
+    now = datetime.now(timezone.utc)
+    future_expiries = []
+    for expiry in (user.trial_expires_at, user.subscription_expires_at):
+        if expiry is None:
+            continue
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry > now:
+            future_expiries.append(expiry)
+    expires_at = max(future_expiries) if future_expiries else None
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "full_name": user.full_name,
+        "company_name": user.company_name,
+        "role": user.role,
+        "subscription_active": subscription_is_active(user),
+        "package": user.package.name if user.package else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "days_left": max(0, (expires_at.date() - now.date()).days) if expires_at else None,
+    }
+
+
+@app.get("/api/packages")
+def api_packages(db: Session = Depends(get_db)):
+    return [
+        {
+            "id": package.id,
+            "name": package.name,
+            "description": package.description,
+            "price": str(package.price),
+            "duration_days": package.duration_days,
+            "customer_limit": package.customer_limit,
+            "document_limit": package.document_limit,
+        }
+        for package in db.scalars(
+            select(Package).where(Package.is_active.is_(True)).order_by(Package.price)
+        ).all()
+    ]
+
+
+@app.get("/api/customers")
+def api_customers(request: Request, db: Session = Depends(get_db)):
+    user = get_api_user(request, db)
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "company": row.company,
+            "email": row.email,
+            "phone": row.phone,
+            "address": row.address,
+            "tax_code": row.tax_code,
+        }
+        for row in db.scalars(
+            select(Customer).where(Customer.owner_id == user.id).order_by(Customer.name)
+        ).all()
+    ]
+
+
+@app.post("/api/customers", status_code=201)
+def api_create_customer(
+    payload: DesktopCustomerPayload,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = get_api_user(request, db)
+    customer = Customer(
+        owner_id=user.id,
+        name=payload.name.strip(),
+        company=payload.company.strip(),
+        email=payload.email.strip(),
+        phone=payload.phone.strip(),
+        address=payload.address.strip(),
+        tax_code=payload.tax_code.strip(),
+    )
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return {"id": customer.id, "name": customer.name, "company": customer.company}
+
+
+@app.get("/api/products")
+def api_products(request: Request, db: Session = Depends(get_db)):
+    user = get_api_user(request, db)
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "description": row.description,
+            "unit": row.unit,
+            "unit_price": str(row.unit_price),
+            "is_active": row.is_active,
+        }
+        for row in db.scalars(
+            select(Product).where(Product.owner_id == user.id).order_by(Product.name)
+        ).all()
+    ]
+
+
+@app.post("/api/products", status_code=201)
+def api_create_product(
+    payload: DesktopProductPayload,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = get_api_user(request, db)
+    api_require_subscription(user)
+    product = Product(
+        owner_id=user.id,
+        name=payload.name.strip(),
+        description=payload.description.strip(),
+        unit=payload.unit.strip() or "lần",
+        unit_price=payload.unit_price.quantize(Decimal("0.01")),
+    )
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+    return {"id": product.id, "name": product.name, "unit_price": str(product.unit_price)}
+
+
+@app.get("/api/documents")
+def api_documents(request: Request, db: Session = Depends(get_db)):
+    user = get_api_user(request, db)
+    return [
+        {
+            "id": document.id,
+            "number": document.number,
+            "type": document.document_type,
+            "title": document.title,
+            "customer": document.customer.company or document.customer.name,
+            "status": document.status,
+            "total": str(document.total),
+            "created_at": document.created_at.isoformat(),
+        }
+        for document in db.scalars(
+            select(Document)
+            .options(selectinload(Document.customer))
+            .where(Document.owner_id == user.id)
+            .order_by(Document.created_at.desc())
+        ).all()
+    ]
+
+
+@app.post("/api/documents", status_code=201)
+def api_create_document(
+    payload: DesktopDocumentPayload,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = get_api_user(request, db)
+    api_require_subscription(user)
+    if payload.kind not in {"proposal", "invoice"}:
+        raise HTTPException(status_code=422, detail="Loại tài liệu phải là proposal hoặc invoice.")
+    customer = db.scalar(
+        select(Customer).where(
+            Customer.id == payload.customer_id, Customer.owner_id == user.id
+        )
+    )
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy khách hàng của tài khoản.")
+    items: list[DocumentItem] = []
+    subtotal = Decimal("0")
+    for line in payload.items:
+        product = db.scalar(
+            select(Product).where(
+                Product.id == line.product_id,
+                Product.owner_id == user.id,
+                Product.is_active.is_(True),
+            )
+        )
+        if product is None:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy sản phẩm {line.product_id}.")
+        line_total = (line.quantity * product.unit_price).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        subtotal += line_total
+        if subtotal > MAX_AMOUNT:
+            raise HTTPException(status_code=422, detail="Tổng giá trị vượt giới hạn.")
+        items.append(
+            DocumentItem(
+                description=product.name,
+                quantity=line.quantity,
+                unit=product.unit,
+                unit_price=product.unit_price,
+                line_total=line_total,
+            )
+        )
+    discount = (subtotal * payload.discount_percent / Decimal("100")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    taxable = subtotal - discount
+    total = (
+        taxable + taxable * payload.tax_percent / Decimal("100")
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if total > MAX_AMOUNT:
+        raise HTTPException(status_code=422, detail="Tổng giá trị vượt giới hạn.")
+    prefix = "BG" if payload.kind == "proposal" else "HD"
+    document_model = Proposal if payload.kind == "proposal" else Invoice
+    document = document_model(
+        owner_id=user.id,
+        customer_id=customer.id,
+        document_type=payload.kind,
+        number=f"{prefix}-{datetime.now(timezone.utc):%Y%m%d}-{secrets.token_hex(3).upper()}",
+        title=payload.title.strip(),
+        subtotal=subtotal,
+        discount_percent=payload.discount_percent,
+        tax_percent=payload.tax_percent,
+        total=total,
+        notes=payload.notes.strip(),
+        items=items,
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return {
+        "id": document.id,
+        "number": document.number,
+        "type": document.document_type,
+        "total": str(document.total),
+    }
+
+
+@app.patch("/api/documents/{document_id}/status")
+def api_update_document_status(
+    document_id: int,
+    payload: DesktopDocumentStatusPayload,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = get_api_user(request, db)
+    api_require_subscription(user)
+    document = db.scalar(
+        select(Document).where(
+            Document.id == document_id,
+            Document.owner_id == user.id,
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
+    if not safe_next_status(document.status, payload.status):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Không thể chuyển trạng thái {document.status} sang {payload.status}.",
+        )
+    document.status = payload.status
+    db.commit()
+    return {"id": document.id, "status": document.status}
 
 @app.get("/health")
 def health():

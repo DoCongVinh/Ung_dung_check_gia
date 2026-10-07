@@ -1,4 +1,4 @@
-"""SQLAlchemy models for Auto Proposal & Invoice Generator."""
+"""SQLAlchemy models for Vinh Ứng dụng tra cứu."""
 
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -104,6 +104,7 @@ class BankAccount(Base):
     account_number: Mapped[str] = mapped_column(String(100))
     account_holder: Mapped[str] = mapped_column(String(160))
     transfer_instruction: Mapped[str] = mapped_column(String(255), default="")
+    qr_code_url: Mapped[str] = mapped_column(String(1000), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

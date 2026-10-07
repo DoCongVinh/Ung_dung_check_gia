@@ -20,6 +20,18 @@ def init_db() -> None:
     if "users" in inspect(engine).get_table_names():
         migrate_user_schema()
     Base.metadata.create_all(bind=engine)
+    if "bank_accounts" in inspect(engine).get_table_names():
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("bank_accounts")
+        }
+        if "qr_code_url" not in columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE bank_accounts "
+                        "ADD COLUMN qr_code_url VARCHAR(1000) NOT NULL DEFAULT ''"
+                    )
+                )
 
 
 def migrate_user_schema() -> None:

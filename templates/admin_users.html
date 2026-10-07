@@ -3,8 +3,22 @@
 {% block content %}
 <section class="page-heading"><span class="eyebrow">QUẢN TRỊ</span><h1>Người dùng</h1><p>Quản lý trạng thái tài khoản, dùng thử, số dư và quyền truy cập gói.</p></section>
 {% if request.query_params.get('updated') %}<div class="alert alert-success">Thông tin người dùng đã được cập nhật.</div>{% endif %}
+{% if request.query_params.get('created') %}<div class="alert alert-success">Đã tạo tài khoản người dùng.</div>{% endif %}
+{% if request.query_params.get('deleted') %}<div class="alert alert-success">Đã xóa tài khoản người dùng và dữ liệu liên quan.</div>{% endif %}
 {% if request.query_params.get('reset_reviewed') %}<div class="alert alert-success">Yêu cầu khôi phục mật khẩu đã được xử lý.</div>{% endif %}
 {% if request.query_params.get('reset_error') == 'password_policy' %}<div class="alert alert-error">Mật khẩu mới cần ít nhất 10 ký tự, gồm chữ hoa, chữ số và ký tự đặc biệt.</div>{% elif request.query_params.get('reset_error') == 'password_mismatch' %}<div class="alert alert-error">Mật khẩu xác nhận không khớp.</div>{% endif %}
+<section class="panel"><div class="panel-heading"><div><h2>Tạo tài khoản / dùng thử</h2><p>Tạo user hoặc cấp trial theo ngày hết hạn.</p></div></div>
+  <form method="post" action="/admin/users" class="stack-form user-create-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Username<input name="username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.-]{3,30}"></label>
+    <label>Email Gmail<input name="email" type="email" required maxlength="255"></label>
+    <label>Họ tên<input name="full_name" required minlength="2" maxlength="160"></label>
+    <label>Doanh nghiệp<input name="company_name" maxlength="200"></label>
+    <label>Mật khẩu ban đầu<input name="password" type="password" required minlength="10" maxlength="72" autocomplete="new-password"></label>
+    <label>Trial hết hạn<input name="expire_date" type="date"></label>
+    <button class="button button-small">Tạo tài khoản</button>
+  </form>
+</section>
 <section class="panel"><div class="panel-heading"><div><h2>Tất cả tài khoản</h2><p>{{ users|length }} người dùng</p></div></div>
   {% if users %}<div class="table-wrap"><table class="users-table"><thead><tr><th>Tài khoản</th><th>Gói / hết hạn</th><th>Số dư (₫)</th><th>Trạng thái</th><th>Thao tác quản trị</th></tr></thead><tbody>
   {% for target in users %}
@@ -13,8 +27,19 @@
     <td>{{ target.balance|money }}</td>
     <td><span class="status {{ 'status-approved' if target.account_status == 'active' else 'status-rejected' }}">{{ {'active':'Đang hoạt động','inactive':'Ngừng hoạt động','suspended':'Đã khóa'}.get(target.account_status,target.account_status) }}</span></td>
     <td><div class="user-admin-actions">
-      <form method="post" action="/admin/users/{{ target.id }}/manage" class="admin-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Dùng thử / gia hạn (ngày)<input type="number" name="days" value="30" min="1" max="3650" required></label><button class="button button-small" name="action" value="trial">Cấp trial</button><button class="button button-small button-outline" name="action" value="extend">Gia hạn gói</button></form>
+      <form method="post" action="/admin/users/{{ target.id }}/manage" class="admin-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Trial hết hạn<input type="date" name="expire_date" value="{{ target.trial_expires_at.strftime('%Y-%m-%d') if target.trial_expires_at else '' }}"></label><label>Hoặc gia hạn (ngày)<input type="number" name="days" value="30" min="1" max="3650" required></label><button class="button button-small" name="action" value="trial">Cấp / gia hạn trial</button><button class="button button-small button-outline" name="action" value="extend">Gia hạn gói</button>{% if target.trial_expires_at %}<button class="button button-small button-danger" name="action" value="trial_off">Tắt trial</button>{% endif %}</form>
       <form method="post" action="/admin/users/{{ target.id }}/manage" class="admin-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Đặt số dư (₫)<input type="number" name="balance" value="{{ target.balance }}" min="0" max="999999999999.99" step="0.01" required></label><button class="button button-small button-outline" name="action" value="set_balance">Cập nhật số dư</button></form>
+      <details class="user-edit-details"><summary class="button button-small button-outline">Sửa tài khoản</summary><form method="post" action="/admin/users/{{ target.id }}/edit" class="stack-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Username<input name="username" value="{{ target.username }}" required minlength="3" maxlength="30"></label>
+        <label>Email<input name="email" type="email" value="{{ target.email }}" required maxlength="255"></label>
+        <label>Họ tên<input name="full_name" value="{{ target.full_name }}" required minlength="2" maxlength="160"></label>
+        <label>Doanh nghiệp<input name="company_name" value="{{ target.company_name }}" maxlength="200"></label>
+        <label>Đổi mật khẩu (không bắt buộc)<input name="password" type="password" minlength="10" maxlength="72" autocomplete="new-password"></label>
+        <label>Ngày hết hạn trial<input name="expire_date" type="date" value="{{ target.trial_expires_at.strftime('%Y-%m-%d') if target.trial_expires_at else '' }}"></label>
+        <button class="button button-small">Lưu tài khoản</button>
+      </form></details>
+      <form method="post" action="/admin/users/{{ target.id }}/delete" onsubmit="return confirm('Xóa tài khoản {{ target.username }} cùng dữ liệu khách hàng, tài liệu và lịch sử thanh toán?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-small button-danger">Xóa tài khoản</button></form>
       <form method="post" action="/admin/users/{{ target.id }}/manage" class="status-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if target.account_status == 'active' %}<button class="button button-small button-danger" name="action" value="suspend">Khóa tài khoản</button><button class="button button-small button-outline" name="action" value="deactivate">Ngừng hoạt động</button>{% else %}<button class="button button-small" name="action" value="activate">Kích hoạt</button>{% endif %}</form>
     </div></td>
   </tr>{% endfor %}

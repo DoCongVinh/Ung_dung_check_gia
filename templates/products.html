@@ -4,6 +4,13 @@
 <section class="page-heading"><div><span class="eyebrow">BẢNG GIÁ</span><h1>Sản phẩm & dịch vụ</h1><p>Lưu mức giá để tạo báo giá, hóa đơn nhất quán và nhanh chóng.</p></div></section>
 {% if request.query_params.get('created') %}<div class="alert alert-success">Đã thêm sản phẩm hoặc dịch vụ.</div>{% endif %}
 {% if not can_manage %}<div class="alert alert-info">Bạn có thể xem danh mục của mình. Đăng ký gói dịch vụ để thêm hoặc chỉnh sửa sản phẩm. <a href="/pricing">Xem các gói</a></div>{% endif %}
+<section class="panel demo-center"><div class="panel-heading"><div><span class="eyebrow">DEMO APP CENTER</span><h2>Trải nghiệm công cụ trực tiếp</h2><p>Ba tiện ích mẫu chạy ngay trên trình duyệt, không cần đăng ký gói.</p></div></div>
+  <div class="demo-app-grid">
+    <article class="demo-app-card" data-demo="vat"><span class="demo-icon">%</span><h3>Máy tính VAT</h3><p>Tính tiền thuế và tổng thanh toán theo thuế suất.</p><label>Tiền trước thuế (₫)<input data-field="amount" type="number" min="0" value="1000000"></label><label>Thuế VAT<select data-field="rate"><option value="8">8%</option><option value="10" selected>10%</option></select></label><output data-result></output></article>
+    <article class="demo-app-card" data-demo="quote"><span class="demo-icon">⌕</span><h3>Dự toán báo giá</h3><p>Ước tính nhanh tổng giá sau chiết khấu và VAT.</p><label>Số lượng<input data-field="quantity" type="number" min="1" value="3"></label><label>Đơn giá (₫)<input data-field="price" type="number" min="0" value="2500000"></label><div class="demo-field-row"><label>Giảm giá %<input data-field="discount" type="number" min="0" max="100" value="5"></label><label>VAT %<input data-field="tax" type="number" min="0" max="100" value="10"></label></div><output data-result></output></article>
+    <article class="demo-app-card" data-demo="invoice"><span class="demo-icon">▤</span><h3>Tạo hóa đơn mẫu</h3><p>Xem trước nhanh hóa đơn demo trước khi sử dụng workspace.</p><label>Khách hàng<input data-field="customer" value="Công ty ABC"></label><label>Nội dung dịch vụ<input data-field="service" value="Thiết kế website"></label><label>Thành tiền (₫)<input data-field="amount" type="number" min="0" value="5000000"></label><output data-result></output></article>
+  </div>
+</section>
 <div class="two-col">
   <section class="panel"><div class="panel-heading"><div><h2>Bảng giá của bạn</h2><p>{{ products|length }} mục đang hoạt động</p></div></div>
     {% if products %}<div class="table-wrap"><table><thead><tr><th>Sản phẩm / dịch vụ</th><th>Đơn vị</th><th>Đơn giá</th></tr></thead><tbody>{% for p in products %}<tr><td class="table-primary">{{ p.name }}{% if p.description %}<small class="table-note">{{ p.description }}</small>{% endif %}</td><td>{{ p.unit }}</td><td>{{ p.unit_price|money }}</td></tr>{% endfor %}</tbody></table></div>
@@ -19,4 +26,5 @@
     </form>
   </section>{% else %}<section class="panel plan-locked"><span class="plan-icon">◇</span><h2>Kích hoạt bảng giá</h2><p>Chọn gói để thêm và quản lý danh mục sản phẩm, dịch vụ.</p><a href="/pricing" class="button button-wide">Đăng ký gói dịch vụ <span>→</span></a></section>{% endif %}
 </div>
+{% block scripts %}<script src="{{ url_for('static', path='demos.js') }}" defer></script>{% endblock %}
 {% endblock %}

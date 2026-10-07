@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f5f7fb">
-  <title>{% block title %}Paperwise{% endblock %} · Paperwise</title>
+  <meta name="description" content="Vinh Ứng dụng tra cứu - báo giá, hóa đơn và tiện ích trực tuyến.">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}">
+  <title>{% block title %}Vinh Ứng dụng tra cứu{% endblock %} · Vinh Ứng dụng tra cứu</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -14,7 +16,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="{% if user is defined and user and user.role == 'admin' %}/admin{% elif user is defined and user %}/app{% else %}/{% endif %}">
-      <span class="brand-mark">P</span><span>paperwise<span class="brand-dot">.</span></span>
+      <span class="brand-mark">V</span><span>Vinh Ứng dụng tra cứu</span>
     </a>
     {% if user is defined and user %}
     <nav class="main-nav">
@@ -43,7 +45,7 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
-  <footer class="site-footer"><span>© {{ now().year }} Paperwise</span><span>Ít thủ công hơn. Nhiều thời gian hơn.</span></footer>
+  <footer class="site-footer"><span>© {{ now().year }} Vinh Ứng dụng tra cứu</span><span>Tiện ích số cho công việc mỗi ngày.</span></footer>
   <script src="{{ url_for('static', path='app.js') }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>

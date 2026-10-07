@@ -11,9 +11,32 @@
   <section class="panel"><div class="panel-heading"><div><h2>Giao dịch gần đây</h2><p>Những yêu cầu đăng ký mới nhất.</p></div><a class="text-link" href="/admin/payments">Xem tất cả →</a></div>
     {% if payments %}<div class="table-wrap"><table><thead><tr><th>Người dùng</th><th>Gói</th><th>Số tiền</th><th>Trạng thái</th></tr></thead><tbody>{% for p in payments %}<tr><td class="table-primary">{{ p.user.full_name }}<small class="table-note">{{ p.user.email }}</small></td><td>{{ p.package.name }}</td><td>{{ p.amount|money }}</td><td><span class="status status-{{ p.status }}">{{ {'created':'Chờ chuyển khoản','pending':'Chờ duyệt','approved':'Đã duyệt','rejected':'Từ chối','expired':'Hết hạn'}.get(p.status,p.status) }}</span></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">Chưa có giao dịch nào.</div>{% endif %}
   </section>
-  <section class="panel"><div class="panel-heading"><div><h2>Gói dịch vụ</h2><p>Giá và giới hạn hiện tại.</p></div></div>
-    <div class="admin-plan-list">{% for p in packages %}<div class="admin-plan"><span class="plan-icon">✳</span><span><b>{{ p.name }}</b><small>{{ p.customer_limit }} khách · {{ p.document_limit }} tài liệu</small></span><strong>{{ p.price|money }}</strong></div>{% endfor %}</div>
-    <p class="form-hint">Các gói mặc định được cấu hình trong mã nguồn tại <code>PACKAGE_SEEDS</code>.</p>
+  <section class="panel" id="packages"><div class="panel-heading"><div><h2>Gói dịch vụ</h2><p>Thêm, chỉnh sửa và ngừng bán gói ngay trên dashboard.</p></div></div>
+    {% if request.query_params.get('package_updated') or request.query_params.get('package_archived') or request.query_params.get('package_deleted') %}<div class="alert alert-success">Đã cập nhật danh mục gói.</div>{% endif %}
+    <form method="post" action="/admin/packages" class="stack-form package-editor">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Tên gói<input name="name" required minlength="2" maxlength="80" placeholder="Business"></label>
+      <label>Giá (₫)<input name="price" type="number" min="0" step="0.01" required></label>
+      <label>Thời hạn (ngày)<input name="duration_days" type="number" min="1" max="3650" value="30" required></label>
+      <label>Giới hạn khách hàng<input name="customer_limit" type="number" min="1" value="100" required></label>
+      <label>Giới hạn tài liệu<input name="document_limit" type="number" min="1" value="100" required></label>
+      <label class="wide-field">Mô tả / quyền lợi<textarea name="description" rows="2" maxlength="4000"></textarea></label>
+      <button class="button button-small">Thêm gói</button>
+    </form>
+    <div class="admin-plan-list">{% for p in packages %}<details class="admin-package-editor"><summary><span class="plan-icon">✳</span><span><b>{{ p.name }}</b><small>{{ p.customer_limit }} khách · {{ p.document_limit }} tài liệu · {{ p.duration_days }} ngày</small></span><strong>{{ p.price|money }}</strong><span class="status {{ 'status-approved' if p.is_active else 'status-rejected' }}">{{ 'Đang bán' if p.is_active else 'Đã ẩn' }}</span></summary>
+      <form method="post" action="/admin/packages/{{ p.id }}/edit" class="stack-form package-editor">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Tên gói<input name="name" value="{{ p.name }}" required minlength="2" maxlength="80"></label>
+        <label>Giá (₫)<input name="price" type="number" min="0" step="0.01" value="{{ p.price }}" required></label>
+        <label>Thời hạn (ngày)<input name="duration_days" type="number" min="1" max="3650" value="{{ p.duration_days }}" required></label>
+        <label>Giới hạn khách hàng<input name="customer_limit" type="number" min="1" value="{{ p.customer_limit }}" required></label>
+        <label>Giới hạn tài liệu<input name="document_limit" type="number" min="1" value="{{ p.document_limit }}" required></label>
+        <label class="wide-field">Mô tả / quyền lợi<textarea name="description" rows="2" maxlength="4000">{{ p.description }}</textarea></label>
+        <label class="checkbox-field"><input type="checkbox" name="is_active" value="true" {% if p.is_active %}checked{% endif %}> Đang bán</label>
+        <button class="button button-small">Lưu gói</button>
+      </form>
+      <form method="post" action="/admin/packages/{{ p.id }}/delete" onsubmit="return confirm('Xóa hoặc ẩn gói {{ p.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-small button-danger">Xóa gói</button></form>
+    </details>{% endfor %}</div>
   </section>
 </div>
 <section class="panel notification-panel" id="notifications">
@@ -30,15 +53,30 @@
   </div>
   {% else %}<div class="empty-state">Chưa có thông báo đăng ký mới.</div>{% endif %}
 </section>
-<section class="panel bank-panel"><div class="panel-heading"><div><h2>Tài khoản nhận thanh toán</h2><p>Thông tin sẽ hiển thị cho khách hàng khi đăng ký gói.</p></div></div>
+<section class="panel bank-panel" id="banks"><div class="panel-heading"><div><h2>Tài khoản nhận thanh toán</h2><p>Thông tin và QR sẽ hiển thị cho khách khi chọn gói.</p></div></div>
+  {% if request.query_params.get('bank_updated') or request.query_params.get('bank_archived') or request.query_params.get('bank_deleted') %}<div class="alert alert-success">Đã cập nhật tài khoản nhận thanh toán.</div>{% endif %}
   <form method="post" action="/admin/banks" class="bank-add-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Ngân hàng / ví<input list="bank-options" name="bank_name" required maxlength="100" placeholder="Vietcombank"></label><datalist id="bank-options">{% for bank_name in vn_banks %}<option value="{{ bank_name }}">{% endfor %}</datalist>
     <label>Số tài khoản / ví<input name="account_number" required maxlength="100"></label>
     <label>Chủ tài khoản<input name="account_holder" required maxlength="160"></label>
     <label>Cú pháp / hướng dẫn<input name="transfer_instruction" maxlength="255" placeholder="Chuyển khoản 24/7"></label>
+    <label class="wide-field">URL ảnh QR (HTTPS)<input name="qr_code_url" type="url" maxlength="1000" placeholder="https://..."></label>
     <button class="button button-small">Thêm tài khoản <span>＋</span></button>
   </form>
-  {% if banks %}<div class="bank-list">{% for bank in banks %}<div class="bank-row"><span class="bank-symbol">{{ bank.bank_name[:1] }}</span><span><b>{{ bank.bank_name }}</b><small>{{ bank.account_number }} · {{ bank.account_holder }}</small></span><span class="status {{ 'status-approved' if bank.is_active else 'status-rejected' }}">{{ 'Đang nhận' if bank.is_active else 'Tạm khóa' }}</span><form method="post" action="/admin/banks/{{ bank.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button">{{ 'Tạm khóa' if bank.is_active else 'Kích hoạt' }}</button></form></div>{% endfor %}</div>{% else %}<div class="empty-state">Chưa có tài khoản thanh toán. Thêm tài khoản để khách hàng có thể đăng ký.</div>{% endif %}
+  {% if banks %}<div class="bank-list">{% for bank in banks %}<details class="bank-editor"><summary class="bank-row"><span class="bank-symbol">{{ bank.bank_name[:1] }}</span><span><b>{{ bank.bank_name }}</b><small>{{ bank.account_number }} · {{ bank.account_holder }}</small></span><span class="status {{ 'status-approved' if bank.is_active else 'status-rejected' }}">{{ 'Đang nhận' if bank.is_active else 'Tạm khóa' }}</span></summary>
+    <form method="post" action="/admin/banks/{{ bank.id }}/edit" class="stack-form bank-add-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Ngân hàng / ví<input name="bank_name" value="{{ bank.bank_name }}" required maxlength="100"></label>
+      <label>Số tài khoản<input name="account_number" value="{{ bank.account_number }}" required maxlength="100"></label>
+      <label>Chủ tài khoản<input name="account_holder" value="{{ bank.account_holder }}" required maxlength="160"></label>
+      <label>Hướng dẫn<input name="transfer_instruction" value="{{ bank.transfer_instruction }}" maxlength="255"></label>
+      <label class="wide-field">URL ảnh QR<input name="qr_code_url" type="url" value="{{ bank.qr_code_url }}" maxlength="1000"></label>
+      <label class="checkbox-field"><input type="checkbox" name="is_active" value="true" {% if bank.is_active %}checked{% endif %}> Đang nhận tiền</label>
+      <button class="button button-small">Lưu tài khoản</button>
+    </form>
+    {% if bank.qr_code_url %}<img class="bank-qr-preview" src="{{ bank.qr_code_url }}" alt="Mã QR {{ bank.bank_name }}" loading="lazy">{% endif %}
+    <form method="post" action="/admin/banks/{{ bank.id }}/delete" onsubmit="return confirm('Xóa hoặc ngừng sử dụng tài khoản này?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-small button-danger">Xóa tài khoản</button></form>
+  </details>{% endfor %}</div>{% else %}<div class="empty-state">Chưa có tài khoản thanh toán. Thêm tài khoản để khách hàng có thể đăng ký.</div>{% endif %}
 </section>
 {% endblock %}
