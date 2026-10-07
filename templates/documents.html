@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Báo giá & hóa đơn{% endblock %}
 {% block content %}
-<section class="page-heading heading-inline"><div><span class="eyebrow">TÀI LIỆU</span><h1>Báo giá & hóa đơn</h1><p>Mọi đề xuất và khoản thanh toán của bạn, trong một danh sách.</p></div><a class="button" href="/documents/new">Tạo tài liệu <span>＋</span></a></section>
+<section class="page-heading heading-inline"><div><span class="eyebrow">HỒ SƠ GIAO DỊCH</span><h1>Hóa đơn mua hàng</h1><p>Lưu trữ hóa đơn, báo giá, lịch sử đăng ký gói và tài liệu PDF đã xuất.</p></div>{% if can_create %}<a class="button" href="/documents/new">Tạo tài liệu <span>＋</span></a>{% else %}<a class="button button-outline" href="/pricing">Kích hoạt gói <span>→</span></a>{% endif %}</section>
 <section class="panel">
   {% if documents %}<div class="table-wrap"><table><thead><tr><th>Mã tài liệu</th><th>Loại</th><th>Khách hàng</th><th>Ngày tạo</th><th>Trạng thái</th><th>Tổng cộng</th><th></th></tr></thead><tbody>
   {% for doc in documents %}<tr><td><a class="table-primary" href="/documents/{{ doc.id }}">{{ doc.number }}</a><small class="table-note">{{ doc.title }}</small></td><td>{{ 'Báo giá' if doc.document_type == 'proposal' else 'Hóa đơn' }}</td><td>{{ doc.customer.company or doc.customer.name }}</td><td>{{ doc.created_at.strftime('%d/%m/%Y') }}</td><td><span class="status status-{{ doc.status }}">{{ {'draft':'Bản nháp','sent':'Đã gửi','accepted':'Đã chấp nhận','paid':'Đã thanh toán'}.get(doc.status,doc.status) }}</span></td><td>{{ doc.total|money }}</td><td><a class="row-arrow" href="/documents/{{ doc.id }}">↗</a></td></tr>{% endfor %}
   </tbody></table></div>
-  {% else %}<div class="empty-state"><div class="empty-illustration">▤</div><b>Chưa có báo giá hoặc hóa đơn</b><p>Hãy tạo tài liệu đầu tiên từ bảng giá và khách hàng của bạn.</p><a class="button button-small" href="/documents/new">Tạo tài liệu</a></div>{% endif %}
+  {% else %}<div class="empty-state"><div class="empty-illustration">▤</div><b>Chưa có báo giá hoặc hóa đơn</b><p>Hãy tạo tài liệu đầu tiên từ bảng giá và khách hàng của bạn.</p>{% if can_create %}<a class="button button-small" href="/documents/new">Tạo tài liệu</a>{% else %}<a class="button button-small" href="/pricing">Xem gói dịch vụ</a>{% endif %}</div>{% endif %}
+</section>
+<section class="panel payment-history"><div class="panel-heading"><div><h2>Lịch sử đăng ký & thanh toán</h2><p>Giao dịch gói dịch vụ của tài khoản này.</p></div></div>
+  {% if payment_requests %}<div class="table-wrap"><table><thead><tr><th>Mã giao dịch</th><th>Gói</th><th>Số tiền</th><th>Ngày</th><th>Trạng thái</th></tr></thead><tbody>{% for p in payment_requests %}<tr><td class="mono">{{ p.reference_code }}</td><td>{{ p.package.name }}</td><td>{{ p.amount|money }}</td><td>{{ p.created_at.strftime('%d/%m/%Y') }}</td><td><span class="status status-{{ p.status }}">{{ {'created':'Chờ chuyển khoản','pending':'Chờ duyệt','approved':'Đã duyệt','rejected':'Từ chối','expired':'Hết hạn'}.get(p.status,p.status) }}</span></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">Chưa có lịch sử giao dịch.</div>{% endif %}
 </section>
 {% endblock %}

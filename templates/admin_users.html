@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Quản lý người dùng{% endblock %}
+{% block content %}
+<section class="page-heading"><span class="eyebrow">QUẢN TRỊ</span><h1>Người dùng</h1><p>Quản lý trạng thái tài khoản, dùng thử, số dư và quyền truy cập gói.</p></section>
+{% if request.query_params.get('updated') %}<div class="alert alert-success">Thông tin người dùng đã được cập nhật.</div>{% endif %}
+{% if request.query_params.get('reset_reviewed') %}<div class="alert alert-success">Yêu cầu khôi phục mật khẩu đã được xử lý.</div>{% endif %}
+{% if request.query_params.get('reset_error') == 'password_policy' %}<div class="alert alert-error">Mật khẩu mới cần ít nhất 10 ký tự, gồm chữ hoa, chữ số và ký tự đặc biệt.</div>{% elif request.query_params.get('reset_error') == 'password_mismatch' %}<div class="alert alert-error">Mật khẩu xác nhận không khớp.</div>{% endif %}
+<section class="panel"><div class="panel-heading"><div><h2>Tất cả tài khoản</h2><p>{{ users|length }} người dùng</p></div></div>
+  {% if users %}<div class="table-wrap"><table class="users-table"><thead><tr><th>Tài khoản</th><th>Gói / hết hạn</th><th>Số dư (₫)</th><th>Trạng thái</th><th>Thao tác quản trị</th></tr></thead><tbody>
+  {% for target in users %}
+  <tr><td><b>{{ target.username }}</b><small class="table-note">{{ target.full_name }} · {{ target.email }}</small><small class="table-note">Tham gia {{ target.created_at.strftime('%d/%m/%Y') }}</small></td>
+    <td>{{ target.package.name if target.package else 'Chưa có gói' }}<small class="table-note">{% if target.trial_expires_at %}Dùng thử đến {{ target.trial_expires_at.strftime('%d/%m/%Y') }}{% endif %}{% if target.subscription_expires_at %}Gói đến {{ target.subscription_expires_at.strftime('%d/%m/%Y') }}{% endif %}{% if not target.trial_expires_at and not target.subscription_expires_at %}—{% endif %}</small></td>
+    <td>{{ target.balance|money }}</td>
+    <td><span class="status {{ 'status-approved' if target.account_status == 'active' else 'status-rejected' }}">{{ {'active':'Đang hoạt động','inactive':'Ngừng hoạt động','suspended':'Đã khóa'}.get(target.account_status,target.account_status) }}</span></td>
+    <td><div class="user-admin-actions">
+      <form method="post" action="/admin/users/{{ target.id }}/manage" class="admin-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Dùng thử / gia hạn (ngày)<input type="number" name="days" value="30" min="1" max="3650" required></label><button class="button button-small" name="action" value="trial">Cấp trial</button><button class="button button-small button-outline" name="action" value="extend">Gia hạn gói</button></form>
+      <form method="post" action="/admin/users/{{ target.id }}/manage" class="admin-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Đặt số dư (₫)<input type="number" name="balance" value="{{ target.balance }}" min="0" max="999999999999.99" step="0.01" required></label><button class="button button-small button-outline" name="action" value="set_balance">Cập nhật số dư</button></form>
+      <form method="post" action="/admin/users/{{ target.id }}/manage" class="status-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if target.account_status == 'active' %}<button class="button button-small button-danger" name="action" value="suspend">Khóa tài khoản</button><button class="button button-small button-outline" name="action" value="deactivate">Ngừng hoạt động</button>{% else %}<button class="button button-small" name="action" value="activate">Kích hoạt</button>{% endif %}</form>
+    </div></td>
+  </tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty-state">Chưa có tài khoản người dùng.</div>{% endif %}
+</section>
+<section class="panel"><div class="panel-heading"><div><h2>Yêu cầu đặt lại mật khẩu</h2><p>Người dùng đã xác minh username, email và câu trả lời bảo mật.</p></div></div>
+  {% set pending_resets = reset_requests|selectattr('status','equalto','pending')|list %}
+  {% if pending_resets %}<div class="reset-request-list">{% for item in pending_resets %}
+  <article class="reset-request"><div><b>{{ item.user.username }} · {{ item.user.email }}</b><small>Gửi lúc {{ item.created_at.strftime('%d/%m/%Y %H:%M') }}</small><small>{{ item.user.security_question or 'Không có câu hỏi bảo mật' }}</small></div>
+    <form method="post" action="/admin/password-resets/{{ item.id }}/review" class="reset-review-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Mật khẩu mới cho người dùng<span class="password-input"><input name="new_password" type="password" minlength="10" maxlength="72" autocomplete="new-password" placeholder="Chữ hoa, số, ký tự đặc biệt"><button class="password-toggle" type="button" aria-label="Hiện mật khẩu mới" aria-pressed="false">◉</button></span></label><label>Xác nhận<span class="password-input"><input name="confirm_password" type="password" minlength="10" maxlength="72" autocomplete="new-password"><button class="password-toggle" type="button" aria-label="Hiện mật khẩu" aria-pressed="false">◉</button></span></label><input name="admin_note" maxlength="1000" placeholder="Ghi chú (không bắt buộc)"><div><button class="button button-small" name="decision" value="approve">Đặt lại & duyệt</button><button class="button button-small button-danger" name="decision" value="reject">Từ chối</button></div></form>
+  </article>{% endfor %}</div>{% else %}<div class="empty-state">Không có yêu cầu khôi phục mật khẩu đang chờ.</div>{% endif %}
+</section>
+{% endblock %}

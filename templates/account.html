@@ -1,22 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Tài khoản{% endblock %}
+{% block title %}Hồ sơ tài khoản{% endblock %}
 {% block content %}
-<section class="page-heading"><div><span class="eyebrow">THIẾT LẬP</span><h1>Tài khoản</h1><p>Quản lý thông tin cá nhân và gói dịch vụ của bạn.</p></div></section>
+<section class="page-heading"><div><span class="eyebrow">THIẾT LẬP & BẢO MẬT</span><h1>Hồ sơ tài khoản</h1><p>Thông tin cá nhân và phương thức khôi phục tài khoản.</p></div></section>
 {% if request.query_params.get('updated') %}<div class="alert alert-success">Thông tin đã được cập nhật.</div>{% endif %}
+{% if request.query_params.get('error') == 'password_policy' %}<div class="alert alert-error">Mật khẩu cấp 2 cần ít nhất 10 ký tự, gồm chữ hoa, chữ số và ký tự đặc biệt.</div>{% elif request.query_params.get('error') == 'password_mismatch' %}<div class="alert alert-error">Mật khẩu cấp 2 xác nhận không khớp.</div>{% elif request.query_params.get('error') == 'security_question' %}<div class="alert alert-error">Hãy nhập câu hỏi bảo mật trước.</div>{% elif request.query_params.get('error') == 'security_answer' %}<div class="alert alert-error">Hãy nhập câu trả lời cho câu hỏi bảo mật.</div>{% elif request.query_params.get('error') == 'full_name' %}<div class="alert alert-error">Họ và tên cần có ít nhất 2 ký tự.</div>{% endif %}
 <div class="two-col">
-  <section class="panel"><div class="panel-heading"><div><h2>Thông tin cá nhân</h2><p>Các thông tin xuất hiện trên hồ sơ workspace.</p></div></div>
-    <form action="/account" method="post" class="stack-form">
+  <section class="panel"><div class="panel-heading"><div><h2>Thông tin cá nhân</h2><p>Thông tin doanh nghiệp và liên hệ.</p></div></div>
+    <form action="/account/profile" method="post" class="stack-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>Họ và tên<input name="full_name" value="{{ user.full_name }}" required maxlength="160"></label>
       <label>Doanh nghiệp<input name="company_name" value="{{ user.company_name }}" maxlength="200"></label>
       <label>Email<input value="{{ user.email }}" disabled></label>
-      <button class="button" type="submit">Lưu thay đổi</button>
+      <label>Số điện thoại<input name="phone" type="tel" value="{{ user.phone }}" maxlength="40" autocomplete="tel"></label>
+      <label>Địa chỉ<textarea name="address" rows="2" maxlength="2000">{{ user.address }}</textarea></label>
+      <label>Số tài khoản ngân hàng<input name="bank_account_number" value="{{ user.bank_account_number }}" maxlength="100" autocomplete="off"></label>
+      <button class="button" type="submit">Lưu hồ sơ</button>
     </form>
   </section>
-  <section class="panel"><div class="panel-heading"><div><h2>Gói dịch vụ</h2><p>Quyền truy cập workspace hiện tại.</p></div></div>
-    {% if package %}<div class="plan-current"><span class="plan-icon">✳</span><div><b>{{ package.name }}</b><small>{{ package.price|money }} / {{ package.duration_days }} ngày</small></div></div>
-      {% if user.subscription_expires_at %}<p class="muted">Có hiệu lực đến {{ user.subscription_expires_at.strftime('%d/%m/%Y %H:%M') }}</p>{% endif %}
-    {% else %}<div class="empty-state"><b>Chưa có gói đang hoạt động</b><p>Chọn gói phù hợp để mở workspace.</p><a class="button button-small" href="/pricing">Xem gói dịch vụ</a></div>{% endif %}
+  <section class="panel"><div class="panel-heading"><div><h2>Khôi phục tài khoản</h2><p>Đặt thông tin bảo mật để tự khôi phục khi quên mật khẩu.</p></div></div>
+    <form action="/account/security" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Câu hỏi bảo mật<input name="security_question" value="{{ user.security_question }}" maxlength="255" placeholder="Ví dụ: Tên thú cưng đầu tiên của bạn?"></label>
+      <label>Câu trả lời bảo mật{% if user.security_answer_hash %}<span class="optional">Đã thiết lập — nhập câu trả lời mới để thay đổi</span>{% endif %}<span class="password-input"><input name="security_answer" type="password" maxlength="255" autocomplete="off"><button class="password-toggle" type="button" aria-label="Hiện câu trả lời" aria-pressed="false">◉</button></span></label>
+      <div class="form-divider"></div>
+      <label>Mật khẩu cấp 2{% if user.secondary_password_hash %}<span class="optional">Đã thiết lập — để trống nếu không đổi</span>{% endif %}<span class="password-input"><input name="secondary_password" type="password" minlength="10" maxlength="72" autocomplete="new-password" placeholder="Chữ hoa, số và ký tự đặc biệt"><button class="password-toggle" type="button" aria-label="Hiện mật khẩu cấp 2" aria-pressed="false">◉</button></span></label>
+      <label>Nhập lại mật khẩu cấp 2<span class="password-input"><input name="confirm_secondary_password" type="password" minlength="10" maxlength="72" autocomplete="new-password"><button class="password-toggle" type="button" aria-label="Hiện mật khẩu cấp 2" aria-pressed="false">◉</button></span></label>
+      <small class="form-hint">Mật khẩu cấp 2 được lưu dạng hash và dùng xác minh khi tự đặt lại mật khẩu.</small>
+      <button class="button button-outline" type="submit">Lưu cài đặt bảo mật</button>
+    </form>
   </section>
 </div>
+<section class="panel account-plan"><div class="panel-heading"><div><h2>Gói dịch vụ</h2><p>Quyền truy cập workspace hiện tại.</p></div></div>
+  {% if package %}<div class="plan-current"><span class="plan-icon">✳</span><div><b>{{ package.name }}</b><small>{{ package.price|money }} / {{ package.duration_days }} ngày</small></div></div>
+    {% if user.trial_expires_at %}<p class="muted">Dùng thử đến {{ user.trial_expires_at.strftime('%d/%m/%Y %H:%M') }}</p>{% elif user.subscription_expires_at %}<p class="muted">Có hiệu lực đến {{ user.subscription_expires_at.strftime('%d/%m/%Y %H:%M') }}</p>{% endif %}
+  {% else %}<div class="empty-state"><b>Chưa có gói đang hoạt động</b><p>Chọn gói phù hợp để mở workspace.</p><a class="button button-small" href="/pricing">Xem gói dịch vụ</a></div>{% endif %}
+</section>
 {% endblock %}

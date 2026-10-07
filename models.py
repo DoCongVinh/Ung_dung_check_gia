@@ -28,9 +28,19 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(30), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(160))
     company_name: Mapped[str] = mapped_column(String(200), default="")
+    phone: Mapped[str] = mapped_column(String(40), default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    bank_account_number: Mapped[str] = mapped_column(String(100), default="")
+    secondary_password_hash: Mapped[str | None] = mapped_column(String(255))
+    security_question: Mapped[str] = mapped_column(String(255), default="")
+    security_answer_hash: Mapped[str | None] = mapped_column(String(255))
+    balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
+    account_status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    trial_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     role: Mapped[str] = mapped_column(String(20), default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     package_id: Mapped[int | None] = mapped_column(ForeignKey("packages.id"))
@@ -42,6 +52,32 @@ class User(Base):
     products: Mapped[list["Product"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     documents: Mapped[list["Document"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     payment_requests: Mapped[list["PaymentRequest"]] = relationship(back_populates="user")
+    notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    message: Mapped[str] = mapped_column(String(500))
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="notifications")
+
+
+class PasswordResetRequest(Base):
+    __tablename__ = "password_reset_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    admin_note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship()
 
 
 class Package(Base):

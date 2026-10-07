@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Quản trị{% endblock %}
 {% block content %}
-<section class="welcome-row"><div><span class="eyebrow">KHU VỰC QUẢN TRỊ</span><h1>Tổng quan <span class="wave">✳</span></h1><p>Quản lý đăng ký, tài khoản nhận thanh toán và gói dịch vụ.</p></div><a class="button" href="/admin/payments">Duyệt yêu cầu{% if pending_count %} <span class="count-badge">{{ pending_count }}</span>{% else %}<span>→</span>{% endif %}</a></section>
+<section class="welcome-row"><div><span class="eyebrow">KHU VỰC QUẢN TRỊ</span><h1>Tổng quan <span class="wave">✳</span></h1><p>Quản lý người dùng, đăng ký thanh toán và gói dịch vụ.</p></div><div class="admin-header-actions"><a class="button button-outline" href="/admin/users">Quản lý người dùng</a><a class="button" href="/admin/payments">Duyệt yêu cầu{% if pending_count %} <span class="count-badge">{{ pending_count }}</span>{% else %}<span>→</span>{% endif %}</a></div></section>
 <div class="metrics-grid">
   <article class="metric-card"><div class="metric-top"><span>Yêu cầu chờ duyệt</span><span class="metric-icon icon-peach">◷</span></div><b>{{ pending_count }}</b><small>cần xử lý trong vòng 2 giờ</small></article>
   <article class="metric-card"><div class="metric-top"><span>Tài khoản người dùng</span><span class="metric-icon icon-violet">◎</span></div><b>{{ user_count }}</b><small>đã đăng ký</small></article>
@@ -16,6 +16,20 @@
     <p class="form-hint">Các gói mặc định được cấu hình trong mã nguồn tại <code>PACKAGE_SEEDS</code>.</p>
   </section>
 </div>
+<section class="panel notification-panel" id="notifications">
+  <div class="panel-heading"><div><h2>Thông báo đăng ký {% if unread_notification_count %}<span class="count-badge">{{ unread_notification_count }}</span>{% endif %}</h2><p>Tài khoản mới vừa được tạo trong hệ thống.</p></div></div>
+  {% if notifications %}
+  <div class="notification-list">
+    {% for notification in notifications %}
+    <article class="notification-row {% if not notification.is_read %}notification-unread{% endif %}">
+      <span class="notification-icon">◎</span>
+      <div class="notification-message"><b>{{ notification.user.username }}</b><p>{{ notification.message }}</p><small>{{ notification.created_at.strftime('%d/%m/%Y %H:%M') }} · {{ notification.user.email }}</small></div>
+      {% if not notification.is_read %}<form method="post" action="/admin/notifications/{{ notification.id }}/read"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button" type="submit">Đánh dấu đã đọc</button></form>{% else %}<span class="notification-read">Đã đọc</span>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}<div class="empty-state">Chưa có thông báo đăng ký mới.</div>{% endif %}
+</section>
 <section class="panel bank-panel"><div class="panel-heading"><div><h2>Tài khoản nhận thanh toán</h2><p>Thông tin sẽ hiển thị cho khách hàng khi đăng ký gói.</p></div></div>
   <form method="post" action="/admin/banks" class="bank-add-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

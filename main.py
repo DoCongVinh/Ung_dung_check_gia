@@ -1,6 +1,7 @@
 """Auto Proposal & Invoice Generator - FastAPI application."""
 
 import os
+import re
 import secrets
 import warnings
 from datetime import datetime, timedelta, timezone
@@ -21,25 +22,26 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from models import (
     BankAccount,
-    Base,
     Customer,
     Document,
     DocumentItem,
     Invoice,
+    Notification,
     Package,
+    PasswordResetRequest,
     PaymentRequest,
     Product,
     Proposal,
     User,
     utcnow,
 )
-from database import SessionLocal, engine
+from database import SessionLocal, init_db
 
 
 ROOT = Path(__file__).resolve().parent
@@ -95,6 +97,23 @@ PACKAGE_SEEDS = [
     },
 ]
 MAX_AMOUNT = Decimal("9999999999.99")
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
+GMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@(?:gmail\.com|gmail\.com\.vn)$",
+    re.IGNORECASE,
+)
+GMAIL_ERROR = (
+    "Hệ thống chỉ chấp nhận địa chỉ Email Gmail "
+    "(@gmail.com hoặc @gmail.com.vn)."
+)
+PASSWORD_PATTERN = re.compile(r"^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$")
+PROFILE_FIELDS = {
+    "Số điện thoại": lambda user: user.phone,
+    "Số tài khoản ngân hàng": lambda user: user.bank_account_number,
+    "Mật khẩu cấp 2": lambda user: user.secondary_password_hash,
+    "Câu trả lời bảo mật": lambda user: user.security_answer_hash,
+}
+MAX_BALANCE = Decimal("999999999999.99")
 
 
 def get_db():
@@ -136,10 +155,42 @@ def csrf_protected(
 
 def render(request: Request, template: str, **context):
     context["csrf_token"] = getattr(request.state, "csrf_token", "")
+    context.setdefault("missing_profile_fields", missing_profile_fields(context.get("user")))
     return templates.TemplateResponse(
         request=request,
         name=template,
         context=context,
+    )
+
+
+def missing_profile_fields(user: User | None) -> list[str]:
+    if user is None or user.role == "admin":
+        return []
+    return [label for label, getter in PROFILE_FIELDS.items() if not getter(user)]
+
+
+def password_policy_error(password: str) -> str | None:
+    if len(password) < 10:
+        return "Mật khẩu cần có ít nhất 10 ký tự."
+    if len(password.encode("utf-8")) > 72:
+        return "Mật khẩu không được vượt quá 72 byte."
+    if not PASSWORD_PATTERN.search(password):
+        return "Mật khẩu phải có ít nhất 1 chữ in hoa, 1 chữ số và 1 ký tự đặc biệt."
+    return None
+
+
+def normalize_security_answer(answer: str) -> str:
+    return " ".join(answer.split()).casefold()
+
+
+def hash_security_answer(answer: str) -> str:
+    return pwd_context.hash(normalize_security_answer(answer))
+
+
+def verify_security_answer(answer: str, stored_hash: str | None) -> bool:
+    return bool(
+        stored_hash
+        and pwd_context.verify(normalize_security_answer(answer), stored_hash)
     )
 
 
@@ -162,7 +213,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     except (JWTError, ValueError, TypeError):
         raise HTTPException(status_code=303, headers={"Location": "/login"}) from None
     user = db.get(User, user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or user.account_status != "active":
         raise HTTPException(status_code=303, headers={"Location": "/login"})
     return user
 
@@ -176,6 +227,12 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 def subscription_is_active(user: User) -> bool:
     if user.role == "admin":
         return True
+    trial_expires = user.trial_expires_at
+    if trial_expires is not None:
+        if trial_expires.tzinfo is None:
+            trial_expires = trial_expires.replace(tzinfo=timezone.utc)
+        if trial_expires > datetime.now(timezone.utc):
+            return True
     expires = user.subscription_expires_at
     if not user.package_id or expires is None:
         return False
@@ -221,27 +278,54 @@ def get_owned_document(db: Session, document_id: int, user_id: int) -> Document:
 
 @app.on_event("startup")
 def initialize_database() -> None:
-    Base.metadata.create_all(bind=engine)
+    init_db()
     with SessionLocal() as db:
         for seed in PACKAGE_SEEDS:
             package = db.scalar(select(Package).where(Package.name == seed["name"]))
             if package is None:
                 db.add(Package(**seed))
         db.commit()
-        admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+        admin_email = os.getenv("ADMIN_EMAIL", "admin@gmail.com").strip().lower()
         admin_password = os.getenv("ADMIN_PASSWORD", "")
-        if admin_email and admin_password:
-            admin = db.scalar(select(User).where(User.email == admin_email))
+        if admin_password:
+            if password_policy_error(admin_password):
+                raise RuntimeError(
+                    "ADMIN_PASSWORD must contain at least 10 characters, "
+                    "one uppercase letter, one digit, and one special character."
+                )
+            admin = db.scalar(
+                select(User).where(func.lower(User.email) == admin_email)
+            )
             if admin is None:
+                base_username = re.sub(
+                    r"[^a-z0-9_.-]", "", admin_email.split("@", 1)[0].lower()
+                )[:24]
+                if len(base_username) < 3:
+                    base_username = "admin"
+                admin_username = base_username
+                suffix = 1
+                while db.scalar(
+                    select(User.id).where(func.lower(User.username) == admin_username)
+                ):
+                    tail = str(suffix)
+                    admin_username = f"{base_username[:30 - len(tail)]}{tail}"
+                    suffix += 1
                 db.add(
                     User(
                         email=admin_email,
+                        username=admin_username,
                         password_hash=pwd_context.hash(admin_password),
                         full_name=os.getenv("ADMIN_NAME", "Quản trị viên"),
                         role="admin",
+                        account_status="active",
                     )
                 )
                 db.commit()
+            elif admin.role != "admin":
+                raise RuntimeError(
+                    "ADMIN_EMAIL is already assigned to a non-admin account. "
+                    "Choose another ADMIN_EMAIL or resolve the account before startup."
+                )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -251,7 +335,7 @@ def home(request: Request):
 
 @app.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
-    return render(request, "auth.html", mode="register", error=None)
+    return render(request, "register.html", error=None)
 
 
 @app.post("/register", response_class=HTMLResponse)
@@ -259,34 +343,119 @@ def register(
     request: Request,
     db: Session = Depends(get_db),
     _csrf: None = Depends(csrf_protected),
-    full_name: str = Form(..., min_length=2, max_length=160),
+    username: str = Form(..., max_length=30),
+    full_name: str = Form(..., max_length=160),
     company_name: str = Form("", max_length=200),
     email: str = Form(..., max_length=255),
-    password: str = Form(..., min_length=10, max_length=72),
+    password: str = Form(..., max_length=128),
+    confirm_password: str = Form(..., max_length=128),
 ):
+    username = username.strip().lower()
     normalized_email = email.strip().lower()
-    if "@" not in normalized_email or len(password.encode("utf-8")) > 72:
-        return render(request, "auth.html", mode="register", error="Email hoặc mật khẩu không hợp lệ.")
-    if db.scalar(select(User.id).where(User.email == normalized_email)):
-        return render(request, "auth.html", mode="register", error="Email này đã được đăng ký.")
+    full_name = full_name.strip()
+    form_data = {
+        "username": username,
+        "full_name": full_name,
+        "company_name": company_name.strip(),
+        "email": normalized_email,
+    }
+    if not GMAIL_PATTERN.fullmatch(normalized_email) or ".." in normalized_email.split("@", 1)[0]:
+        return render(
+            request,
+            "register.html",
+            error=GMAIL_ERROR,
+            form_data=form_data,
+        )
+    local_part = normalized_email.split("@", 1)[0]
+    if local_part.startswith(".") or local_part.endswith("."):
+        return render(
+            request,
+            "register.html",
+            error="Vui lòng nhập địa chỉ Email hợp lệ.",
+            form_data=form_data,
+        )
+    if not USERNAME_PATTERN.fullmatch(username):
+        return render(
+            request,
+            "register.html",
+            error="Tên đăng nhập phải có 3–30 ký tự, chỉ gồm chữ cái không dấu, số, dấu chấm, gạch dưới hoặc gạch ngang.",
+            form_data=form_data,
+        )
+    if len(full_name) < 2:
+        return render(
+            request,
+            "register.html",
+            error="Họ và tên cần có ít nhất 2 ký tự.",
+            form_data=form_data,
+        )
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@gmail.com").strip().lower()
+    if normalized_email == admin_email:
+        return render(
+            request,
+            "register.html",
+            error="Địa chỉ Email này được dành riêng cho quản trị viên.",
+            form_data=form_data,
+        )
+    if error := password_policy_error(password):
+        return render(
+            request,
+            "register.html",
+            error=error,
+            form_data=form_data,
+        )
+    if password != confirm_password:
+        return render(
+            request,
+            "register.html",
+            error="Mật khẩu xác nhận không khớp.",
+            form_data=form_data,
+        )
+    if db.scalar(select(User.id).where(func.lower(User.email) == normalized_email)):
+        return render(
+            request,
+            "register.html",
+            error="Email này đã được đăng ký.",
+            form_data=form_data,
+        )
+    if db.scalar(select(User.id).where(func.lower(User.username) == username)):
+        return render(
+            request,
+            "register.html",
+            error="Tên đăng nhập này đã được sử dụng.",
+            form_data=form_data,
+        )
     user = User(
+        username=username,
         email=normalized_email,
-        full_name=full_name.strip(),
+        full_name=full_name,
         company_name=company_name.strip(),
         password_hash=pwd_context.hash(password),
     )
     db.add(user)
     try:
+        db.flush()
+        db.add(
+            Notification(
+                user_id=user.id,
+                message=f"Người dùng mới {user.username} ({user.email}) vừa đăng ký tài khoản thành công.",
+            )
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "auth.html", mode="register", error="Email này đã được đăng ký.")
+        if db.scalar(select(User.id).where(func.lower(User.email) == normalized_email)):
+            error = "Email này đã được đăng ký."
+        elif db.scalar(select(User.id).where(func.lower(User.username) == username)):
+            error = "Tên đăng nhập này đã được sử dụng."
+        else:
+            error = "Không thể hoàn tất đăng ký do dữ liệu bị trùng. Hãy thử lại."
+        return render(request, "register.html", error=error, form_data=form_data)
     return RedirectResponse("/login?registered=1", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, registered: bool = False):
-    return render(request, "auth.html", mode="login", error=None, registered=registered)
+    return render(request, "login.html", error=None, registered=registered)
 
 
 @app.post("/login")
@@ -294,17 +463,26 @@ def login(
     request: Request,
     db: Session = Depends(get_db),
     _csrf: None = Depends(csrf_protected),
-    email: str = Form(...),
+    identifier: str = Form(...),
     password: str = Form(...),
 ):
-    user = db.scalar(select(User).where(User.email == email.strip().lower()))
+    normalized_identifier = identifier.strip().lower()
+    user = db.scalar(
+        select(User).where(
+            or_(
+                func.lower(User.email) == normalized_identifier,
+                func.lower(User.username) == normalized_identifier,
+            )
+        )
+    )
     if (
         user is None
         or not user.is_active
+        or user.account_status != "active"
         or len(password.encode("utf-8")) > 72
         or not pwd_context.verify(password, user.password_hash)
     ):
-        return render(request, "auth.html", mode="login", error="Email hoặc mật khẩu không chính xác.")
+        return render(request, "login.html", error="Email/Tên đăng nhập hoặc mật khẩu không chính xác.")
     response = RedirectResponse("/admin" if user.role == "admin" else "/app", status_code=303)
     response.set_cookie(
         "access_token",
@@ -317,6 +495,115 @@ def login(
     return response
 
 
+@app.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_page(request: Request):
+    return render(request, "forgot_password.html", error=None, success=None)
+
+
+@app.post("/forgot-password/self-reset", response_class=HTMLResponse)
+def self_reset_password(
+    request: Request,
+    identifier: str = Form(..., max_length=255),
+    security_answer: str = Form(..., min_length=1, max_length=255),
+    secondary_password: str = Form(..., max_length=128),
+    new_password: str = Form(..., max_length=128),
+    confirm_password: str = Form(..., max_length=128),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(csrf_protected),
+):
+    normalized = identifier.strip().lower()
+    user = db.scalar(
+        select(User).where(
+            or_(func.lower(User.email) == normalized, func.lower(User.username) == normalized)
+        )
+    )
+    if (
+        user is None
+        or not user.is_active
+        or not user.secondary_password_hash
+        or not verify_security_answer(security_answer, user.security_answer_hash)
+        or len(secondary_password.encode("utf-8")) > 72
+        or not pwd_context.verify(secondary_password, user.secondary_password_hash)
+    ):
+        return render(
+            request,
+            "forgot_password.html",
+            error="Không xác minh được thông tin bảo mật.",
+            success=None,
+        )
+    if error := password_policy_error(new_password):
+        return render(request, "forgot_password.html", error=error, success=None)
+    if new_password != confirm_password:
+        return render(
+            request,
+            "forgot_password.html",
+            error="Mật khẩu xác nhận không khớp.",
+            success=None,
+        )
+    user.password_hash = pwd_context.hash(new_password)
+    db.commit()
+    return render(
+        request,
+        "forgot_password.html",
+        error=None,
+        success="Đã đổi mật khẩu. Bạn có thể đăng nhập bằng mật khẩu mới.",
+    )
+
+
+@app.post("/forgot-password/admin-request", response_class=HTMLResponse)
+def request_admin_password_reset(
+    request: Request,
+    username: str = Form(..., max_length=30),
+    email: str = Form(..., max_length=255),
+    security_answer: str = Form(..., min_length=1, max_length=255),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(csrf_protected),
+):
+    user = db.scalar(
+        select(User).where(
+            func.lower(User.username) == username.strip().lower(),
+            func.lower(User.email) == email.strip().lower(),
+            User.role == "user",
+        )
+    )
+    if user is None or not verify_security_answer(
+        security_answer, user.security_answer_hash
+    ):
+        return render(
+            request,
+            "forgot_password.html",
+            error="Thông tin xác minh không khớp với tài khoản.",
+            success=None,
+        )
+    pending = db.scalar(
+        select(PasswordResetRequest.id).where(
+            PasswordResetRequest.user_id == user.id,
+            PasswordResetRequest.status == "pending",
+        )
+    )
+    if pending:
+        return render(
+            request,
+            "forgot_password.html",
+            error=None,
+            success="Đã có yêu cầu đặt lại mật khẩu đang chờ Admin xử lý.",
+        )
+    db.add(PasswordResetRequest(user_id=user.id))
+    db.add(
+        Notification(
+            user_id=user.id,
+            message=f"Yêu cầu hỗ trợ đặt lại mật khẩu từ {user.username} ({user.email}) cần Admin duyệt.",
+        )
+    )
+    db.commit()
+    return render(
+        request,
+        "forgot_password.html",
+        error=None,
+        success="Đã gửi yêu cầu xác minh tới Admin.",
+    )
+
+
 @app.post("/logout")
 def logout(_csrf: None = Depends(csrf_protected)):
     response = RedirectResponse("/", status_code=303)
@@ -325,21 +612,63 @@ def logout(_csrf: None = Depends(csrf_protected)):
 
 
 @app.get("/account", response_class=HTMLResponse)
-def account_page(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def account_page(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     db.refresh(user, attribute_names=["package"])
     return render(request, "account.html", user=user, package=user.package)
 
 
-@app.post("/account")
-def update_account(
+@app.post("/account/profile")
+def update_account_profile(
     full_name: str = Form(..., min_length=2, max_length=160),
     company_name: str = Form("", max_length=200),
+    phone: str = Form("", max_length=40),
+    address: str = Form("", max_length=2000),
+    bank_account_number: str = Form("", max_length=100),
     _csrf: None = Depends(csrf_protected),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    user.full_name = full_name.strip()
+    normalized_name = full_name.strip()
+    if len(normalized_name) < 2:
+        return RedirectResponse("/account?error=full_name", status_code=303)
+    user.full_name = normalized_name
     user.company_name = company_name.strip()
+    user.phone = phone.strip()
+    user.address = address.strip()
+    user.bank_account_number = bank_account_number.strip()
+    db.commit()
+    return RedirectResponse("/account?updated=1", status_code=303)
+
+
+@app.post("/account/security")
+def update_account_security(
+    security_question: str = Form("", max_length=255),
+    security_answer: str = Form("", max_length=255),
+    secondary_password: str = Form("", max_length=128),
+    confirm_secondary_password: str = Form("", max_length=128),
+    _csrf: None = Depends(csrf_protected),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if secondary_password:
+        if error := password_policy_error(secondary_password):
+            return RedirectResponse("/account?error=password_policy", status_code=303)
+        if secondary_password != confirm_secondary_password:
+            return RedirectResponse("/account?error=password_mismatch", status_code=303)
+        if len(secondary_password.encode("utf-8")) > 72:
+            return RedirectResponse("/account?error=password_policy", status_code=303)
+        user.secondary_password_hash = pwd_context.hash(secondary_password)
+    if security_answer:
+        if not security_question.strip():
+            return RedirectResponse("/account?error=security_question", status_code=303)
+        user.security_question = security_question.strip()
+        user.security_answer_hash = hash_security_answer(security_answer)
+    elif security_question.strip() and not user.security_answer_hash:
+        return RedirectResponse("/account?error=security_answer", status_code=303)
     db.commit()
     return RedirectResponse("/account?updated=1", status_code=303)
 
@@ -444,7 +773,7 @@ def dashboard(
 @app.get("/customers", response_class=HTMLResponse)
 def customers_page(
     request: Request,
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     customers = db.scalars(
@@ -462,7 +791,7 @@ def create_customer(
     address: str = Form("", max_length=2000),
     tax_code: str = Form("", max_length=50),
     _csrf: None = Depends(csrf_protected),
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     customer = Customer(
@@ -482,13 +811,19 @@ def create_customer(
 @app.get("/products", response_class=HTMLResponse)
 def products_page(
     request: Request,
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     products = db.scalars(
         select(Product).where(Product.owner_id == user.id).order_by(Product.name)
     ).all()
-    return render(request, "products.html", user=user, products=products)
+    return render(
+        request,
+        "products.html",
+        user=user,
+        products=products,
+        can_manage=subscription_is_active(user),
+    )
 
 
 @app.post("/products")
@@ -517,7 +852,7 @@ def create_product(
 @app.get("/documents", response_class=HTMLResponse)
 def documents_page(
     request: Request,
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     documents = db.scalars(
@@ -526,7 +861,20 @@ def documents_page(
         .where(Document.owner_id == user.id)
         .order_by(Document.created_at.desc())
     ).all()
-    return render(request, "documents.html", user=user, documents=documents)
+    payment_requests = db.scalars(
+        select(PaymentRequest)
+        .options(selectinload(PaymentRequest.package))
+        .where(PaymentRequest.user_id == user.id)
+        .order_by(PaymentRequest.created_at.desc())
+    ).all()
+    return render(
+        request,
+        "documents.html",
+        user=user,
+        documents=documents,
+        payment_requests=payment_requests,
+        can_create=subscription_is_active(user),
+    )
 
 
 @app.get("/documents/new", response_class=HTMLResponse)
@@ -666,7 +1014,7 @@ def create_document(
 def document_detail(
     document_id: int,
     request: Request,
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     document = get_owned_document(db, document_id, user.id)
@@ -713,7 +1061,7 @@ def register_pdf_font() -> str:
 @app.get("/documents/{document_id}/pdf")
 def document_pdf(
     document_id: int,
-    user: User = Depends(require_subscription),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     document = get_owned_document(db, document_id, user.id)
@@ -797,6 +1145,15 @@ def admin_dashboard(
     ) or 0
     user_count = db.scalar(select(func.count(User.id)).where(User.role == "user")) or 0
     payment_count = db.scalar(select(func.count(PaymentRequest.id))) or 0
+    unread_notification_count = db.scalar(
+        select(func.count(Notification.id)).where(Notification.is_read.is_(False))
+    ) or 0
+    notifications = db.scalars(
+        select(Notification)
+        .options(selectinload(Notification.user))
+        .order_by(Notification.created_at.desc())
+        .limit(10)
+    ).all()
     payments = db.scalars(
         select(PaymentRequest)
         .options(selectinload(PaymentRequest.user), selectinload(PaymentRequest.package))
@@ -816,7 +1173,24 @@ def admin_dashboard(
         banks=banks,
         packages=packages,
         vn_banks=VN_BANKS,
+        notifications=notifications,
+        unread_notification_count=unread_notification_count,
     )
+
+
+@app.post("/admin/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: int,
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    notification = db.get(Notification, notification_id)
+    if notification is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thông báo.")
+    notification.is_read = True
+    db.commit()
+    return RedirectResponse("/admin#notifications", status_code=303)
 
 
 @app.get("/admin/payments", response_class=HTMLResponse)
@@ -835,6 +1209,122 @@ def admin_payments_page(
         .order_by(PaymentRequest.created_at.desc())
     ).all()
     return render(request, "admin_payments.html", user=admin, payments=payments)
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+def admin_users_page(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    users = db.scalars(
+        select(User)
+        .options(selectinload(User.package))
+        .where(User.role == "user")
+        .order_by(User.created_at.desc())
+    ).all()
+    reset_requests = db.scalars(
+        select(PasswordResetRequest)
+        .options(selectinload(PasswordResetRequest.user))
+        .order_by(PasswordResetRequest.created_at.desc())
+        .limit(50)
+    ).all()
+    packages = db.scalars(select(Package).where(Package.is_active.is_(True)).order_by(Package.price)).all()
+    return render(
+        request,
+        "admin_users.html",
+        user=admin,
+        users=users,
+        reset_requests=reset_requests,
+        packages=packages,
+    )
+
+
+@app.post("/admin/users/{target_user_id}/manage")
+def manage_user(
+    target_user_id: int,
+    action: str = Form(...),
+    days: int = Form(30, ge=1, le=3650),
+    balance: Decimal = Form(0, ge=0, le=MAX_BALANCE),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    target = db.scalar(
+        select(User).where(User.id == target_user_id, User.role == "user")
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản người dùng.")
+    if action == "activate":
+        target.account_status = "active"
+        target.is_active = True
+    elif action == "deactivate":
+        target.account_status = "inactive"
+        target.is_active = False
+    elif action == "suspend":
+        target.account_status = "suspended"
+        target.is_active = False
+    elif action == "trial":
+        package = db.scalar(select(Package).where(Package.name == "Cơ bản"))
+        if package is None:
+            raise HTTPException(status_code=503, detail="Chưa cấu hình gói Cơ bản.")
+        target.package_id = package.id
+        target.account_status = "active"
+        target.is_active = True
+        target.trial_expires_at = utcnow() + timedelta(days=days)
+    elif action == "extend":
+        if target.package_id is None:
+            package = db.scalar(select(Package).where(Package.name == "Cơ bản"))
+            if package is None:
+                raise HTTPException(status_code=503, detail="Chưa cấu hình gói Cơ bản.")
+            target.package_id = package.id
+        expiry = target.subscription_expires_at
+        if expiry and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        target.subscription_expires_at = max(expiry, utcnow()) + timedelta(days=days) if expiry else utcnow() + timedelta(days=days)
+        target.account_status = "active"
+        target.is_active = True
+    elif action == "set_balance":
+        target.balance = balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    else:
+        raise HTTPException(status_code=400, detail="Thao tác quản lý tài khoản không hợp lệ.")
+    db.commit()
+    return RedirectResponse("/admin/users?updated=1", status_code=303)
+
+
+@app.post("/admin/password-resets/{reset_id}/review")
+def review_password_reset(
+    reset_id: int,
+    decision: str = Form(...),
+    new_password: str = Form(""),
+    confirm_password: str = Form(""),
+    admin_note: str = Form("", max_length=1000),
+    _csrf: None = Depends(csrf_protected),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    reset_request = db.scalar(
+        select(PasswordResetRequest)
+        .options(selectinload(PasswordResetRequest.user))
+        .where(PasswordResetRequest.id == reset_id)
+    )
+    if reset_request is None or reset_request.status != "pending":
+        raise HTTPException(status_code=404, detail="Yêu cầu đặt lại mật khẩu không còn chờ duyệt.")
+    if decision not in {"approve", "reject"}:
+        raise HTTPException(status_code=400, detail="Quyết định không hợp lệ.")
+    if decision == "approve":
+        if error := password_policy_error(new_password):
+            return RedirectResponse("/admin/users?reset_error=password_policy", status_code=303)
+        if new_password != confirm_password:
+            return RedirectResponse("/admin/users?reset_error=password_mismatch", status_code=303)
+        reset_request.user.password_hash = pwd_context.hash(new_password)
+        reset_request.status = "approved"
+    else:
+        reset_request.status = "rejected"
+    reset_request.admin_note = admin_note.strip()
+    reset_request.reviewed_at = utcnow()
+    db.commit()
+    return RedirectResponse("/admin/users?reset_reviewed=1", status_code=303)
 
 
 @app.post("/admin/payments/{payment_id}/review")

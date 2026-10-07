@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Tạo tài khoản{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="auth-aside"><div class="auth-quote">“Tôi muốn dành thời gian sáng tạo nội dung — không phải loay hoay với giấy tờ.”</div><div class="quote-person"><span class="avatar avatar-light">V</span><span><b>Công Vinh</b><small>Người sáng tạo nội dung</small></span></div><div class="auth-aside-foot">Paperwise · không gian làm việc của bạn</div></div>
+  <div class="auth-panel">
+    <span class="eyebrow">BẮT ĐẦU HÀNH TRÌNH</span>
+    <h1>Tạo tài khoản</h1>
+    <p class="muted">Miễn phí để bắt đầu. Không cần thẻ thanh toán.</p>
+    {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" action="/register" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Tên đăng nhập (Username)<input name="username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.-]{3,30}" autocomplete="username" value="{{ form_data.username if form_data else '' }}" placeholder="minhanh_01"></label>
+      <small class="form-hint">3–30 ký tự; dùng chữ không dấu, số, dấu chấm, gạch dưới hoặc gạch ngang.</small>
+      <label>Họ và tên<input name="full_name" required minlength="2" maxlength="160" autocomplete="name" value="{{ form_data.full_name if form_data else '' }}" placeholder="Nguyễn Minh Anh"></label>
+      <label>Tên doanh nghiệp <span class="optional">Không bắt buộc</span><input name="company_name" maxlength="200" autocomplete="organization" value="{{ form_data.company_name if form_data else '' }}" placeholder="Studio của bạn"></label>
+      <label>Email<input name="email" type="email" required maxlength="255" autocomplete="email" value="{{ form_data.email if form_data else '' }}" placeholder="ban@gmail.com"></label>
+      <small class="form-hint">Chấp nhận @gmail.com và @gmail.com.vn</small>
+      <label>Mật khẩu<span class="password-input"><input name="password" type="password" required minlength="10" maxlength="72" autocomplete="new-password" placeholder="••••••••••"><button class="password-toggle" type="button" aria-label="Hiện mật khẩu" aria-pressed="false">◉</button></span></label>
+      <small class="form-hint">Ít nhất 10 ký tự, gồm chữ hoa, chữ số và ký tự đặc biệt.</small>
+      <label>Nhập lại mật khẩu<span class="password-input"><input name="confirm_password" type="password" required minlength="10" maxlength="72" autocomplete="new-password" placeholder="Nhập lại mật khẩu"><button class="password-toggle" type="button" aria-label="Hiện mật khẩu" aria-pressed="false">◉</button></span></label>
+      <button class="button button-wide" type="submit">Tạo tài khoản <span>→</span></button>
+    </form>
+    <p class="auth-switch">Đã có tài khoản? <a href="/login">Đăng nhập</a></p>
+  </div>
+</section>
+{% endblock %}

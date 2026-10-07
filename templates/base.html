@@ -19,9 +19,9 @@
     {% if user is defined and user %}
     <nav class="main-nav">
       {% if user.role == 'admin' %}
-        <a href="/admin">Tổng quan</a><a href="/admin/payments">Thanh toán</a>
+        <a href="/admin">Tổng quan</a><a href="/admin/users">Người dùng</a><a href="/admin/payments">Thanh toán</a>
       {% else %}
-        <a href="/app">Tổng quan</a><a href="/customers">Khách hàng</a><a href="/products">Sản phẩm</a><a href="/documents">Tài liệu</a>
+        <a href="/app">Tổng quan</a><a href="/customers">Khách hàng</a><a href="/products">Sản phẩm</a><a href="/documents">Hóa đơn mua hàng</a>
       {% endif %}
     </nav>
     <div class="top-actions">
@@ -34,6 +34,13 @@
     {% endif %}
   </header>
   <main class="page-shell">
+    {% if missing_profile_fields %}
+    <aside class="profile-reminder" role="status">
+      <span class="reminder-icon">!</span>
+      <div><b>Hoàn thiện hồ sơ để bảo vệ tài khoản</b><p>Còn thiếu: {{ missing_profile_fields|join(', ') }}.</p></div>
+      <a href="/account">Cập nhật hồ sơ <span>→</span></a>
+    </aside>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer"><span>© {{ now().year }} Paperwise</span><span>Ít thủ công hơn. Nhiều thời gian hơn.</span></footer>

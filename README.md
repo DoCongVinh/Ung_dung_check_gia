@@ -4,7 +4,8 @@ Micro-SaaS tạo báo giá/hóa đơn cho doanh nghiệp nhỏ, xây dựng bằ
 
 ## Tính năng
 
-- Đăng ký/đăng nhập, cookie phiên JWT `HttpOnly`, phân quyền User/Admin và bảo vệ CSRF cho biểu mẫu.
+- Đăng ký với username duy nhất và chỉ chấp nhận Gmail (`@gmail.com`, `@gmail.com.vn`); đăng nhập bằng email hoặc username, cookie JWT `HttpOnly`, phân quyền User/Admin và CSRF cho biểu mẫu.
+- Thông báo đăng ký mới trong dashboard Admin; database cũ tự thêm cột username và backfill tên đăng nhập duy nhất khi khởi động.
 - Hồ sơ doanh nghiệp và CRM khách hàng; danh mục sản phẩm/dịch vụ, giá và đơn vị tính.
 - Tạo báo giá/hóa đơn, tính số lượng, chiết khấu, VAT ở backend; theo dõi trạng thái bản nháp → đã gửi → đã chấp nhận/đã thanh toán.
 - Tải tài liệu PDF. Trên Windows dùng font Arial/Calibri có sẵn; nếu triển khai Linux, cấu hình `PDF_FONT_PATH` trỏ tới font TTF hỗ trợ tiếng Việt.
@@ -30,7 +31,11 @@ uvicorn main:app --reload
 
 Mở <http://127.0.0.1:8000>. Endpoint kiểm tra hoạt động: <http://127.0.0.1:8000/health>.
 
-Lần khởi động đầu tiên sẽ tạo các gói dịch vụ và tài khoản admin (nếu đặt `ADMIN_EMAIL`/`ADMIN_PASSWORD`). Tài khoản admin hiện có sẽ không bị ghi đè khi khởi động lại. Không dùng mật khẩu mẫu trong production. Đặt `COOKIE_SECURE=true` khi chạy sau HTTPS; đặt `SECRET_KEY` riêng, ngẫu nhiên và ổn định giữa các lần khởi động.
+Lần khởi động đầu tiên sẽ tạo các gói dịch vụ. Email admin mặc định là `admin@gmail.com`; để tạo tài khoản admin, đặt `ADMIN_PASSWORD` qua biến môi trường trước khi chạy (mật khẩu phải có ít nhất 10 ký tự, một chữ hoa, một số và một ký tự đặc biệt). Có thể đặt `ADMIN_EMAIL` để đổi email. Không nhúng mật khẩu vào mã nguồn. Tài khoản admin hiện có sẽ không bị ghi đè khi khởi động lại. Đặt `COOKIE_SECURE=true` khi chạy sau HTTPS; đặt `SECRET_KEY` riêng, ngẫu nhiên và ổn định giữa các lần khởi động.
+
+Đăng ký người dùng chỉ chấp nhận Gmail (`@gmail.com`/`@gmail.com.vn`), username duy nhất và mật khẩu mạnh; hồ sơ có phương thức khôi phục qua mật khẩu cấp 2/câu trả lời bí mật hoặc yêu cầu Admin reset. Admin có thể xem/quản lý trạng thái, trial, hạn gói, số dư và yêu cầu reset tại **Người dùng**.
+
+Khi nâng cấp database cũ, ứng dụng tự thêm cột `username`, tạo username duy nhất từ phần trước `@` của email cho tài khoản hiện có (thêm hậu tố số nếu bị trùng), rồi tạo unique index. Hãy sao lưu `app.db` trước khi nâng cấp production. Mật khẩu vẫn giữ nguyên hash hiện có; tài khoản cũ có thể đăng nhập bằng email hoặc username mới được sinh.
 
 Sau khi đăng nhập bằng admin:
 
