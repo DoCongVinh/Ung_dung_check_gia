@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Gói dịch vụ{% endblock %}
+{% block content %}
+<section class="page-heading"><div><span class="eyebrow">GÓI DỊCH VỤ</span><h1>Chọn nhịp độ của bạn.</h1><p>Mở khóa không gian làm việc sau khi quản trị viên xác nhận thanh toán thủ công.</p></div></section>
+{% if request.query_params.get('submitted') %}<div class="alert alert-success">Đã ghi nhận chuyển khoản. Yêu cầu của bạn đang chờ duyệt (tối đa 2 giờ).</div>{% endif %}
+{% if request.query_params.get('payment') %}{% for payment in payment_requests %}{% if payment.id|string == request.query_params.get('payment') and payment.status == 'created' %}
+<section class="payment-instructions panel">
+  <div><span class="eyebrow">THÔNG TIN CHUYỂN KHOẢN</span><h2>{{ payment.package.name }} · {{ payment.amount|money }}</h2><p>Vui lòng chuyển đúng số tiền và giữ nguyên nội dung bên dưới. Mã chỉ dùng cho giao dịch này.</p></div>
+  {% if payment.bank_account %}<div class="bank-details"><div><small>NGÂN HÀNG / VÍ</small><b>{{ payment.bank_account.bank_name }}</b></div><div><small>SỐ TÀI KHOẢN / VÍ</small><b>{{ payment.bank_account.account_number }}</b></div><div><small>CHỦ TÀI KHOẢN</small><b>{{ payment.bank_account.account_holder }}</b></div><div><small>NỘI DUNG CHUYỂN KHOẢN</small><b class="transfer-copy">{{ payment.transfer_content }}</b></div>{% if payment.bank_account.transfer_instruction %}<p>{{ payment.bank_account.transfer_instruction }}</p>{% endif %}</div>{% else %}<div class="alert alert-error">Thông tin nhận tiền không còn khả dụng. Liên hệ quản trị viên.</div>{% endif %}
+  <div class="payment-deadline">Mã giao dịch <b>{{ payment.reference_code }}</b><span>·</span> Vui lòng xác nhận trong 2 giờ.</div>
+  <form method="post" action="/payments/{{ payment.id }}/submitted"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button" type="submit">Tôi đã chuyển khoản <span>→</span></button></form>
+</section>
+{% endif %}{% endfor %}{% endif %}
+<div class="pricing-grid">
+  {% for package in packages %}
+  <article class="price-card {% if package.name == 'Pro' %}price-featured{% endif %}">
+    {% if package.name == 'Pro' %}<span class="popular-tag">PHỔ BIẾN NHẤT</span>{% endif %}
+    <span class="plan-icon">{{ '✳' if package.name == 'Pro' else ('◌' if package.name == 'Cơ bản' else '✦') }}</span>
+    <h2>{{ package.name }}</h2><p>{{ package.description }}</p>
+    <div class="price-value">{{ package.price|money }}<small> / {{ package.duration_days }} ngày</small></div>
+    <ul class="check-list"><li>Tối đa {{ "{:,}".format(package.customer_limit).replace(",", ".") }} khách hàng</li><li>Tối đa {{ "{:,}".format(package.document_limit).replace(",", ".") }} tài liệu</li><li>Xuất PDF chuyên nghiệp</li><li>Hỗ trợ báo giá & hóa đơn</li></ul>
+    <form action="/subscribe/{{ package.id }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button {% if package.name != 'Pro' %}button-outline{% endif %} button-wide" {% if not banks %}disabled title="Chưa có tài khoản nhận tiền"{% endif %}>Chọn gói <span>→</span></button></form>
+  </article>
+  {% endfor %}
+</div>
+<section class="panel payment-history">
+  <div class="panel-heading"><div><h2>Lịch sử đăng ký</h2><p>Trạng thái các giao dịch và thời hạn duyệt.</p></div></div>
+  {% if payment_requests %}
+  <div class="table-wrap"><table><thead><tr><th>Mã giao dịch</th><th>Gói</th><th>Số tiền</th><th>Tạo lúc</th><th>Trạng thái</th></tr></thead><tbody>
+  {% for p in payment_requests %}<tr><td class="mono">{{ p.reference_code }}</td><td>{{ p.package.name }}</td><td>{{ p.amount|money }}</td><td>{{ p.created_at.strftime('%d/%m/%Y %H:%M') }}</td><td><span class="status status-{{ p.status }}">{{ {'created':'Chờ chuyển khoản','pending':'Chờ duyệt','approved':'Đã duyệt','rejected':'Từ chối','expired':'Hết hạn'}.get(p.status,p.status) }}</span>{% if p.admin_note %}<small class="table-note">{{ p.admin_note }}</small>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state">Chưa có yêu cầu thanh toán nào.</div>{% endif %}
+</section>
+{% endblock %}

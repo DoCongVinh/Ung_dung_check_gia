@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Duyệt thanh toán{% endblock %}
+{% block content %}
+<section class="page-heading"><span class="eyebrow">KHU VỰC QUẢN TRỊ</span><h1>Yêu cầu thanh toán</h1><p>Đối chiếu số tiền, nội dung chuyển khoản và thông tin doanh nghiệp. Duyệt trong vòng 2 giờ kể từ khi khách xác nhận chuyển.</p></section>
+{% if request.query_params.get('reviewed') %}<div class="alert alert-success">Đã cập nhật trạng thái yêu cầu.</div>{% endif %}
+{% if request.query_params.get('expired') %}<div class="alert alert-info">Yêu cầu đã quá hạn và được đánh dấu hết hạn.</div>{% endif %}
+<section class="panel">
+  {% if payments %}<div class="table-wrap"><table class="review-table"><thead><tr><th>Người dùng / doanh nghiệp</th><th>Gói & số tiền</th><th>Chuyển khoản</th><th>Hạn duyệt</th><th>Trạng thái / xử lý</th></tr></thead><tbody>
+  {% for p in payments %}<tr><td class="table-primary">{{ p.business_name or p.user.company_name or p.user.full_name }}<small class="table-note">{{ p.user.full_name }} · {{ p.user.email }}</small></td><td><b>{{ p.package.name }}</b><small class="table-note">{{ p.amount|money }}</small></td><td><span class="mono">{{ p.reference_code }}</span><small class="table-note">{{ p.transfer_content }}</small><small class="table-note">{{ p.bank_account.bank_name if p.bank_account else 'Tài khoản đã xóa' }} · {{ p.bank_account.account_number if p.bank_account else '' }}</small></td><td>{% if p.submitted_at %}<span>{{ p.expires_at.strftime('%d/%m/%Y %H:%M') }}</span><small class="table-note">Đã gửi {{ p.submitted_at.strftime('%H:%M %d/%m') }}</small>{% else %}Chưa xác nhận chuyển{% endif %}</td><td><span class="status status-{{ p.status }}">{{ {'created':'Chờ chuyển khoản','pending':'Chờ duyệt','approved':'Đã duyệt','rejected':'Từ chối','expired':'Hết hạn'}.get(p.status,p.status) }}</span>
+  {% if p.status == 'pending' %}<form class="review-form" method="post" action="/admin/payments/{{ p.id }}/review"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="admin_note" maxlength="1000" placeholder="Ghi chú (tùy chọn)"><div><button name="decision" value="approve" class="button button-small">Duyệt</button><button name="decision" value="reject" class="button button-small button-danger">Từ chối</button></div></form>{% elif p.admin_note %}<small class="table-note">{{ p.admin_note }}</small>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty-state">Chưa có yêu cầu thanh toán nào.</div>{% endif %}
+</section>
+{% endblock %}

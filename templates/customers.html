@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Khách hàng{% endblock %}
+{% block content %}
+<section class="page-heading heading-inline"><div><span class="eyebrow">CRM NHẸ</span><h1>Khách hàng</h1><p>Mối quan hệ tốt bắt đầu từ việc nhớ đúng thông tin.</p></div><a class="button" href="#add-customer">Thêm khách hàng <span>＋</span></a></section>
+{% if request.query_params.get('created') %}<div class="alert alert-success">Đã thêm khách hàng.</div>{% endif %}
+<div class="two-col content-top">
+  <section class="panel"><div class="panel-heading"><div><h2>Danh bạ của bạn</h2><p>{{ customers|length }} khách hàng</p></div></div>
+    {% if customers %}<div class="table-wrap"><table><thead><tr><th>Tên</th><th>Doanh nghiệp</th><th>Email / điện thoại</th><th>Mã số thuế</th></tr></thead><tbody>{% for c in customers %}<tr><td class="table-primary">{{ c.name }}</td><td>{{ c.company or '—' }}</td><td>{{ c.email or '—' }}<small class="table-note">{{ c.phone }}</small></td><td>{{ c.tax_code or '—' }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<div class="empty-state"><div class="empty-illustration">◎</div><b>Danh bạ đang trống</b><p>Thêm khách hàng để bắt đầu tạo tài liệu.</p></div>{% endif %}
+  </section>
+  <section class="panel" id="add-customer"><div class="panel-heading"><div><h2>Thêm khách hàng</h2><p>Lưu thông tin để dùng lại trên tài liệu.</p></div></div>
+    <form method="post" action="/customers" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Người liên hệ<input name="name" required maxlength="160" placeholder="Nguyễn Minh Anh"></label>
+      <label>Tên doanh nghiệp<input name="company" maxlength="200" placeholder="Công ty ABC"></label>
+      <label>Email<input name="email" type="email" maxlength="255" placeholder="contact@congty.vn"></label>
+      <label>Điện thoại<input name="phone" maxlength="50" placeholder="+84"></label>
+      <label>Mã số thuế<input name="tax_code" maxlength="50"></label>
+      <label>Địa chỉ<textarea name="address" rows="2" maxlength="2000"></textarea></label>
+      <button class="button button-wide">Lưu khách hàng</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Tạo {{ 'báo giá' if kind == 'proposal' else 'hóa đơn' }}{% endblock %}
+{% block content %}
+<section class="page-heading"><a class="back-link" href="/documents">← Tất cả tài liệu</a><span class="eyebrow">TÀI LIỆU MỚI</span><h1>Tạo {{ 'báo giá' if kind == 'proposal' else 'hóa đơn' }}</h1><p>Chọn khách hàng, thêm sản phẩm và chúng tôi sẽ tính toán giúp bạn.</p></section>
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if not customers %}<div class="alert alert-info">Bạn cần <a href="/customers">thêm khách hàng</a> trước khi tạo tài liệu.</div>{% endif %}
+{% if not products %}<div class="alert alert-info">Bạn cần <a href="/products">thêm sản phẩm hoặc dịch vụ</a> trước khi tạo tài liệu.</div>{% endif %}
+<form action="/documents/new" method="post" class="document-builder">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="panel"><div class="panel-heading"><div><span class="step-label">01</span><h2>Thông tin cơ bản</h2><p>Chọn người nhận và đặt tên tài liệu.</p></div></div>
+    <div class="form-row">
+      <label>Loại tài liệu<select name="kind"><option value="proposal" {% if kind == 'proposal' %}selected{% endif %}>Báo giá</option><option value="invoice" {% if kind == 'invoice' %}selected{% endif %}>Hóa đơn</option></select></label>
+      <label>Khách hàng<select name="customer_id" required><option value="">Chọn khách hàng</option>{% for customer in customers %}<option value="{{ customer.id }}">{{ customer.company or customer.name }}{% if customer.company %} · {{ customer.name }}{% endif %}</option>{% endfor %}</select></label>
+    </div>
+    <div class="form-row">
+      <label>Tiêu đề<input name="title" required maxlength="200" value="{{ 'Báo giá dịch vụ' if kind == 'proposal' else 'Hóa đơn dịch vụ' }}"></label>
+      <label>Ngày đến hạn <span class="optional">Không bắt buộc</span><input name="due_date" type="date"></label>
+    </div>
+  </section>
+  <section class="panel"><div class="panel-heading"><div><span class="step-label">02</span><h2>Sản phẩm & dịch vụ</h2><p>Số lượng và đơn giá được tính tự động từ bảng giá.</p></div><button class="button button-outline button-small" type="button" id="add-item">＋ Thêm dòng</button></div>
+    {% if products %}
+    <div id="item-rows" class="item-rows">
+      <div class="item-row">
+        <label>Sản phẩm<select name="item_product_ids" required>{% for p in products %}<option value="{{ p.id }}" data-price="{{ p.unit_price }}" data-unit="{{ p.unit }}">{{ p.name }} · {{ p.unit_price|money }}</option>{% endfor %}</select></label>
+        <label>Số lượng<input name="quantities" type="number" min="0.01" max="1000000" step="0.01" value="1" required></label>
+        <button class="remove-item" type="button" aria-label="Xóa dòng">×</button>
+      </div>
+    </div>
+    <template id="item-template"><div class="item-row">
+      <label>Sản phẩm<select name="item_product_ids" required>{% for p in products %}<option value="{{ p.id }}" data-price="{{ p.unit_price }}" data-unit="{{ p.unit }}">{{ p.name }} · {{ p.unit_price|money }}</option>{% endfor %}</select></label>
+      <label>Số lượng<input name="quantities" type="number" min="0.01" max="1000000" step="0.01" value="1" required></label>
+      <button class="remove-item" type="button" aria-label="Xóa dòng">×</button>
+    </div></template>
+    {% endif %}
+    <div class="form-row form-row-short">
+      <label>Chiết khấu (%)<input name="discount_percent" type="number" value="0" min="0" max="100" step="0.01"></label>
+      <label>Thuế VAT (%)<input name="tax_percent" type="number" value="0" min="0" max="100" step="0.01"></label>
+    </div>
+    <label>Ghi chú<textarea name="notes" rows="3" maxlength="4000" placeholder="Điều khoản thanh toán hoặc lời nhắn cho khách hàng..."></textarea></label>
+  </section>
+  <div class="builder-footer"><a href="/documents" class="text-link">Hủy</a><button class="button" type="submit" {% if not customers or not products %}disabled{% endif %}>Tạo tài liệu <span>→</span></button></div>
+</form>
+{% endblock %}

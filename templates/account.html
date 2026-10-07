@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Tài khoản{% endblock %}
+{% block content %}
+<section class="page-heading"><div><span class="eyebrow">THIẾT LẬP</span><h1>Tài khoản</h1><p>Quản lý thông tin cá nhân và gói dịch vụ của bạn.</p></div></section>
+{% if request.query_params.get('updated') %}<div class="alert alert-success">Thông tin đã được cập nhật.</div>{% endif %}
+<div class="two-col">
+  <section class="panel"><div class="panel-heading"><div><h2>Thông tin cá nhân</h2><p>Các thông tin xuất hiện trên hồ sơ workspace.</p></div></div>
+    <form action="/account" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Họ và tên<input name="full_name" value="{{ user.full_name }}" required maxlength="160"></label>
+      <label>Doanh nghiệp<input name="company_name" value="{{ user.company_name }}" maxlength="200"></label>
+      <label>Email<input value="{{ user.email }}" disabled></label>
+      <button class="button" type="submit">Lưu thay đổi</button>
+    </form>
+  </section>
+  <section class="panel"><div class="panel-heading"><div><h2>Gói dịch vụ</h2><p>Quyền truy cập workspace hiện tại.</p></div></div>
+    {% if package %}<div class="plan-current"><span class="plan-icon">✳</span><div><b>{{ package.name }}</b><small>{{ package.price|money }} / {{ package.duration_days }} ngày</small></div></div>
+      {% if user.subscription_expires_at %}<p class="muted">Có hiệu lực đến {{ user.subscription_expires_at.strftime('%d/%m/%Y %H:%M') }}</p>{% endif %}
+    {% else %}<div class="empty-state"><b>Chưa có gói đang hoạt động</b><p>Chọn gói phù hợp để mở workspace.</p><a class="button button-small" href="/pricing">Xem gói dịch vụ</a></div>{% endif %}
+  </section>
+</div>
+{% endblock %}

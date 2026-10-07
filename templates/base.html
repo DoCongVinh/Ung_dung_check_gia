@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <title>{% block title %}Paperwise{% endblock %} · Paperwise</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{% if user is defined and user and user.role == 'admin' %}/admin{% elif user is defined and user %}/app{% else %}/{% endif %}">
+      <span class="brand-mark">P</span><span>paperwise<span class="brand-dot">.</span></span>
+    </a>
+    {% if user is defined and user %}
+    <nav class="main-nav">
+      {% if user.role == 'admin' %}
+        <a href="/admin">Tổng quan</a><a href="/admin/payments">Thanh toán</a>
+      {% else %}
+        <a href="/app">Tổng quan</a><a href="/customers">Khách hàng</a><a href="/products">Sản phẩm</a><a href="/documents">Tài liệu</a>
+      {% endif %}
+    </nav>
+    <div class="top-actions">
+      {% if user.role != 'admin' %}<a class="top-plan" href="/pricing">{% if user.package %}{{ user.package.name }}{% else %}Chọn gói{% endif %}</a>{% endif %}
+      <a class="avatar" href="/account">{{ user.full_name[:1]|upper }}</a>
+      <form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button" type="submit">Thoát</button></form>
+    </div>
+    {% else %}
+    <div class="top-actions"><a class="link-button" href="/login">Đăng nhập</a><a class="button button-small" href="/register">Dùng thử miễn phí <span>↗</span></a></div>
+    {% endif %}
+  </header>
+  <main class="page-shell">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer"><span>© {{ now().year }} Paperwise</span><span>Ít thủ công hơn. Nhiều thời gian hơn.</span></footer>
+  <script src="{{ url_for('static', path='app.js') }}" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

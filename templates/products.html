@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Sản phẩm & dịch vụ{% endblock %}
+{% block content %}
+<section class="page-heading"><div><span class="eyebrow">BẢNG GIÁ</span><h1>Sản phẩm & dịch vụ</h1><p>Lưu mức giá để tạo báo giá, hóa đơn nhất quán và nhanh chóng.</p></div></section>
+{% if request.query_params.get('created') %}<div class="alert alert-success">Đã thêm sản phẩm hoặc dịch vụ.</div>{% endif %}
+<div class="two-col">
+  <section class="panel"><div class="panel-heading"><div><h2>Bảng giá của bạn</h2><p>{{ products|length }} mục đang hoạt động</p></div></div>
+    {% if products %}<div class="table-wrap"><table><thead><tr><th>Sản phẩm / dịch vụ</th><th>Đơn vị</th><th>Đơn giá</th></tr></thead><tbody>{% for p in products %}<tr><td class="table-primary">{{ p.name }}{% if p.description %}<small class="table-note">{{ p.description }}</small>{% endif %}</td><td>{{ p.unit }}</td><td>{{ p.unit_price|money }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<div class="empty-state"><div class="empty-illustration">◈</div><b>Chưa có sản phẩm</b><p>Thêm dịch vụ đầu tiên vào bảng giá.</p></div>{% endif %}
+  </section>
+  <section class="panel"><div class="panel-heading"><div><h2>Thêm sản phẩm</h2><p>Đơn giá tính bằng đồng Việt Nam.</p></div></div>
+    <form method="post" action="/products" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Tên sản phẩm / dịch vụ<input name="name" required maxlength="180" placeholder="Thiết kế website"></label>
+      <label>Mô tả<input name="description" maxlength="2000" placeholder="Gói thiết kế website cơ bản"></label>
+      <div class="form-row"><label>Đơn vị<input name="unit" value="dự án" maxlength="40"></label><label>Đơn giá (₫)<input name="unit_price" type="number" min="1" step="0.01" required placeholder="12000000"></label></div>
+      <button class="button button-wide">Thêm vào bảng giá</button>
+    </form>
+  </section>
+</div>
+{% endblock %}
